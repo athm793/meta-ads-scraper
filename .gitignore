@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local data (SQLite + browser profile)
 /data/
+
+# local debug scripts
+debug-*.cjs

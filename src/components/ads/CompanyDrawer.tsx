@@ -6,6 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { AdCard } from './AdCard';
 import type { BulkCompany, Ad } from '@/types/ads';
 import { useEffect, useState } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Skeleton } from '@/components/ui/skeleton';
 
 interface CompanyDrawerProps {
   company: BulkCompany | null;
@@ -14,14 +16,28 @@ interface CompanyDrawerProps {
   onAdClick: (ad: Ad) => void;
 }
 
+function AdSkeleton() {
+  return (
+    <div className="rounded-xl border border-border/50 bg-card overflow-hidden">
+      <Skeleton className="w-full aspect-video" />
+      <div className="p-3 space-y-2">
+        <Skeleton className="h-3 w-28" />
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-3/4" />
+      </div>
+    </div>
+  );
+}
+
 export function CompanyDrawer({ company, open, onClose, onAdClick }: CompanyDrawerProps) {
   const [ads, setAds] = useState<Ad[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!company || !open) return;
+    setAds([]);
     setLoading(true);
-    fetch(`/api/ads?advertiser=${encodeURIComponent(company.company_name)}&limit=50`)
+    fetch(`/api/ads?job_id=${company.id}&limit=50`)
       .then((r) => r.json())
       .then((data) => setAds(data.ads || []))
       .finally(() => setLoading(false));
@@ -29,29 +45,61 @@ export function CompanyDrawer({ company, open, onClose, onAdClick }: CompanyDraw
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-[540px] p-0">
-        <SheetHeader className="px-6 pt-6 pb-4 border-b">
-          <SheetTitle>{company?.company_name}</SheetTitle>
+      <SheetContent side="right" className="w-[560px] max-w-full p-0 flex flex-col">
+        <SheetHeader className="px-6 pt-6 pb-4 border-b border-border/50 shrink-0">
+          <SheetTitle className="text-base">{company?.company_name}</SheetTitle>
           {company && (
-            <div className="flex gap-2 flex-wrap">
-              <Badge variant="secondary">{company.active_ads_count} active</Badge>
-              <Badge variant="outline">{company.inactive_ads_count} inactive</Badge>
-              {company.ad_types.map((t) => <Badge key={t} variant="outline" className="text-xs">{t}</Badge>)}
+            <div className="flex gap-2 flex-wrap mt-1">
+              <Badge variant="secondary" className="text-xs">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block mr-1.5" />
+                {company.active_ads_count} active
+              </Badge>
+              <Badge variant="outline" className="text-xs">{company.inactive_ads_count} inactive</Badge>
+              {company.spend_range && (
+                <Badge variant="outline" className="text-xs">{company.spend_range}</Badge>
+              )}
+              {company.ad_types.slice(0, 2).map((t) => (
+                <Badge key={t} variant="outline" className="text-xs">{t}</Badge>
+              ))}
             </div>
           )}
         </SheetHeader>
-        <ScrollArea className="h-[calc(100vh-140px)]">
+
+        <ScrollArea className="flex-1">
           <div className="p-4">
             {loading ? (
-              <p className="text-sm text-muted-foreground text-center py-8">Loading ads...</p>
-            ) : ads.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">No ads found for this company</p>
-            ) : (
               <div className="grid grid-cols-1 gap-4">
-                {ads.map((ad) => (
-                  <AdCard key={ad.id} ad={ad} onClick={() => onAdClick(ad)} onSave={() => {}} />
-                ))}
+                {Array.from({ length: 4 }).map((_, i) => <AdSkeleton key={i} />)}
               </div>
+            ) : ads.length === 0 ? (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="py-16 text-center text-sm text-muted-foreground"
+              >
+                No ads found for this company
+              </motion.div>
+            ) : (
+              <AnimatePresence>
+                <motion.div
+                  className="grid grid-cols-1 gap-4"
+                  initial="hidden"
+                  animate="visible"
+                  variants={{ visible: { transition: { staggerChildren: 0.04 } } }}
+                >
+                  {ads.map((ad, i) => (
+                    <motion.div
+                      key={ad.id}
+                      variants={{
+                        hidden: { opacity: 0, y: 12 },
+                        visible: { opacity: 1, y: 0, transition: { type: 'spring', stiffness: 400, damping: 30 } },
+                      }}
+                    >
+                      <AdCard ad={ad} index={i} onClick={() => onAdClick(ad)} onSave={() => {}} />
+                    </motion.div>
+                  ))}
+                </motion.div>
+              </AnimatePresence>
             )}
           </div>
         </ScrollArea>

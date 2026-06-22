@@ -3,7 +3,7 @@ export type AdStatus = 'ACTIVE' | 'INACTIVE';
 export type AdCategory = 'ALL' | 'POLITICAL' | 'HOUSING' | 'EMPLOYMENT' | 'CREDIT';
 export type Platform = 'FACEBOOK' | 'INSTAGRAM' | 'AUDIENCE_NETWORK' | 'MESSENGER';
 export type ScrapeJobStatus = 'running' | 'complete' | 'error';
-export type BulkJobStatus = 'queued' | 'running' | 'complete' | 'error';
+export type BulkJobStatus = 'queued' | 'running' | 'complete' | 'error' | 'paused' | 'cancelled';
 export type BulkCompanyStatus = 'pending' | 'scraping' | 'done' | 'not_found' | 'error';
 
 export interface CarouselCard {
@@ -35,7 +35,8 @@ export interface Ad {
   cta_text?: string;
   link_url?: string;
   media_type: MediaType;
-  media_urls: string[];
+  media_urls: string[];       // thumbnail / image URLs
+  video_urls: string[];       // actual playable video URLs
   carousel_cards: CarouselCard[];
   platforms: Platform[];
   status: AdStatus;
@@ -56,14 +57,38 @@ export interface Ad {
   ad_snapshot_url?: string;
   saved: boolean;
   collection_id?: string;
+  tags?: Tag[];
   scraped_at: string;
   scrape_job_id?: string;
   is_new?: boolean;
+  // Deep Search fields — populated when scrapeAdvertiserDeep is used
+  deep_search_done?: boolean;
+  targeting_age_min?: number;
+  targeting_age_max?: number;
+  targeting_gender?: string;
+  targeting_locations?: string[];
+  targeting_interests?: string[];
+  policy_status?: string;
+  // "See ad details" / EU transparency data — populated when detail fetch runs
+  detail_fetched?: boolean;
+  total_reach?: number;            // EU total reach (when available)
+  beneficiary?: string;            // ad beneficiary (EU transparency)
+  payer?: string;                  // ad payer (EU transparency)
+}
+
+// Filters controlling which scraped ads to keep / detail. Applied client+server.
+export interface AdScopeFilters {
+  status?: 'ACTIVE' | 'INACTIVE' | 'ALL';
+  media_types?: MediaType[];       // empty/undefined = all
+  platforms?: Platform[];          // empty/undefined = all
+  fetch_details?: boolean;         // run the "See ad details" fetch per ad
+  workers?: number;                // parallel companies scraped at once (1–20)
 }
 
 export interface SearchParams {
   keyword?: string;
   advertiser?: string;
+  page_id?: string;
   country?: string;
   category?: AdCategory;
   platform?: Platform;
@@ -73,6 +98,8 @@ export interface SearchParams {
   date_to?: string;
   language?: string;
   limit?: number;
+  deep_search?: boolean;
+  fetch_details?: boolean;   // fetch "See ad details" data for every ad
 }
 
 export interface ScrapeJob {
@@ -92,6 +119,14 @@ export interface Collection {
   ad_count?: number;
 }
 
+export interface Tag {
+  id: string;
+  name: string;
+  color?: string;
+  created_at: string;
+  ad_count?: number;
+}
+
 export interface BulkJob {
   id: string;
   name: string;
@@ -99,6 +134,7 @@ export interface BulkJob {
   status: BulkJobStatus;
   total_companies: number;
   completed_companies: number;
+  filters?: AdScopeFilters;
 }
 
 export interface BulkCompany {
@@ -125,10 +161,11 @@ export interface SSEEvent {
 }
 
 export interface BulkSSEEvent {
-  type: 'company_start' | 'company_done' | 'done' | 'error';
+  type: 'company_start' | 'company_done' | 'done' | 'error' | 'paused' | 'cancelled';
   company_name?: string;
   company_id?: string;
   result?: BulkCompany;
   message?: string;
   total?: number;
+  dedup_count?: number;
 }

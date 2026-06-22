@@ -79,21 +79,40 @@ function extractMediaUrls(node: Record<string, unknown>): string[] {
     if (typeof url === 'string') urls.push(url);
   });
 
+  // For video ads include the preview image (thumbnail) in media_urls
   const videos = snapshot.videos as Array<Record<string, unknown>> | undefined;
   videos?.forEach((vid) => {
-    const url = vid.video_hd_url || vid.video_sd_url || vid.video_preview_image_url;
-    if (typeof url === 'string') urls.push(url);
+    const thumb = vid.video_preview_image_url;
+    if (typeof thumb === 'string') urls.push(thumb);
   });
 
   const cards = snapshot.cards as Array<Record<string, unknown>> | undefined;
   cards?.forEach((card) => {
     const imgUrl = card.resized_image_url || card.original_image_url;
-    const vidUrl = card.video_hd_url || card.video_sd_url;
     if (typeof imgUrl === 'string') urls.push(imgUrl);
+  });
+
+  return [...new Set(urls)].filter(Boolean);
+}
+
+function extractVideoUrls(node: Record<string, unknown>): string[] {
+  const urls: string[] = [];
+  const snapshot = node.snapshot as Record<string, unknown> | undefined;
+  if (!snapshot) return urls;
+
+  const videos = snapshot.videos as Array<Record<string, unknown>> | undefined;
+  videos?.forEach((vid) => {
+    const url = vid.video_hd_url || vid.video_sd_url;
+    if (typeof url === 'string') urls.push(url);
+  });
+
+  const cards = snapshot.cards as Array<Record<string, unknown>> | undefined;
+  cards?.forEach((card) => {
+    const vidUrl = card.video_hd_url || card.video_sd_url;
     if (typeof vidUrl === 'string') urls.push(vidUrl);
   });
 
-  return [...new Set(urls)];
+  return [...new Set(urls)].filter(Boolean);
 }
 
 function extractCarouselCards(node: Record<string, unknown>): CarouselCard[] {
@@ -104,7 +123,7 @@ function extractCarouselCards(node: Record<string, unknown>): CarouselCard[] {
 
   return cards.map((card) => ({
     title: typeof card.title === 'string' ? card.title : undefined,
-    body: typeof card.body === 'string' ? card.body : undefined,
+    body: bodyText(card.body) || undefined,
     link_url: typeof card.link_url === 'string' ? card.link_url : undefined,
     image_url:
       typeof card.resized_image_url === 'string'
@@ -166,6 +185,20 @@ function toIso(val: unknown): string | undefined {
   return s;
 }
 
+// Body text can be a plain string, an object { text }, or { markup: { __html } }.
+// Meta's SSR/GraphQL snapshot uses the object form, which earlier code missed.
+function bodyText(v: unknown): string {
+  if (!v) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (typeof o.text === 'string' && o.text) return o.text;
+    const markup = o.markup as Record<string, unknown> | undefined;
+    if (markup && typeof markup.__html === 'string' && markup.__html) return markup.__html;
+  }
+  return '';
+}
+
 function extractBodies(node: Record<string, unknown>): string[] {
   // ad_creative_bodies is the standard field from GraphQL API responses
   const direct = toStringArray(node.ad_creative_bodies);
@@ -175,19 +208,21 @@ function extractBodies(node: Record<string, unknown>): string[] {
   const snapshot = node.snapshot as Record<string, unknown> | undefined;
   if (!snapshot) return [];
 
-  // snapshot.body for single-creative ads
-  if (typeof snapshot.body === 'string' && snapshot.body) return [snapshot.body];
+  const bodies: string[] = [];
+
+  // Primary body (string | { text } | { markup })
+  const main = bodyText(snapshot.body);
+  if (main) bodies.push(main);
+
+  // Extra text variants some ads carry
+  const extra = snapshot.extra_texts as unknown[] | undefined;
+  extra?.forEach((e) => { const t = bodyText(e); if (t) bodies.push(t); });
 
   // snapshot.cards[].body for carousel/multi-creative
   const cards = snapshot.cards as Array<Record<string, unknown>> | undefined;
-  if (cards) {
-    const bodies = cards
-      .map((c) => (typeof c.body === 'string' ? c.body : ''))
-      .filter(Boolean);
-    if (bodies.length > 0) return [...new Set(bodies)];
-  }
+  cards?.forEach((c) => { const t = bodyText(c.body); if (t) bodies.push(t); });
 
-  return [];
+  return [...new Set(bodies.filter(Boolean))];
 }
 
 export function parseAdNode(node: Record<string, unknown>, jobId?: string): Ad {
@@ -249,6 +284,7 @@ export function parseAdNode(node: Record<string, unknown>, jobId?: string): Ad {
     link_url: linkUrl,
     media_type: inferMediaType(node),
     media_urls: extractMediaUrls(node),
+    video_urls: extractVideoUrls(node),
     carousel_cards: extractCarouselCards(node),
     platforms: extractPlatforms(node),
     status: node.is_active ? 'ACTIVE' : 'INACTIVE',
@@ -276,6 +312,93 @@ export function parseAdNode(node: Record<string, unknown>, jobId?: string): Ad {
     scraped_at: new Date().toISOString(),
     scrape_job_id: jobId,
   };
+}
+
+function firstOf(json: unknown, key: string): unknown {
+  const hits = deepFind(json, key);
+  return hits.length > 0 ? hits[0] : undefined;
+}
+
+function asNumber(v: unknown): number | undefined {
+  if (v == null) return undefined;
+  const n = Number(v);
+  return isNaN(n) ? undefined : n;
+}
+
+/**
+ * Parses the "See ad details" payload (AdLibraryAdDetailsV2Query response).
+ * Extracts the EU-transparency breakdown that the listing/snapshot never
+ * contains. Defensive: Meta nests these under varying paths, so we deep-search
+ * by key and tolerate missing fields. Returns a partial Ad to merge onto the
+ * base ad. EU-only data (reach/age/gender/country) is absent for non-EU ads.
+ */
+export function parseAdDetails(json: unknown): Partial<Ad> {
+  const out: Partial<Ad> = { detail_fetched: true };
+
+  const totalReach = asNumber(firstOf(json, 'eu_total_reach') ?? firstOf(json, 'total_reach'));
+  if (totalReach != null) out.total_reach = totalReach;
+
+  const payer = firstOf(json, 'payer');
+  if (typeof payer === 'string' && payer) out.payer = payer;
+  const beneficiary = firstOf(json, 'beneficiary');
+  if (typeof beneficiary === 'string' && beneficiary) out.beneficiary = beneficiary;
+
+  // Age/gender breakdown — Meta returns age_country_gender_reach_breakdown:
+  // [{ country, age_gender_breakdowns: [{ age_range, male, female, unknown }] }]
+  const breakdown = firstOf(json, 'age_country_gender_reach_breakdown') as
+    | Array<Record<string, unknown>>
+    | undefined;
+  if (Array.isArray(breakdown) && breakdown.length > 0) {
+    const ageGenderCounts = new Map<string, { age: string; gender: string; count: number }>();
+    const byCountry: RegionEntry[] = [];
+    let grand = 0;
+
+    for (const entry of breakdown) {
+      const country = String(entry.country ?? entry.region ?? '');
+      const rows = entry.age_gender_breakdowns as Array<Record<string, unknown>> | undefined;
+      let countryTotal = 0;
+      rows?.forEach((r) => {
+        const male = asNumber(r.male) ?? 0;
+        const female = asNumber(r.female) ?? 0;
+        const unknown = asNumber(r.unknown) ?? 0;
+        countryTotal += male + female + unknown;
+        const age = r.age_range ? String(r.age_range) : '';
+        if (age) {
+          for (const [gender, count] of [['male', male], ['female', female]] as const) {
+            if (!count) continue;
+            const key = `${age}|${gender}`;
+            const cur = ageGenderCounts.get(key) ?? { age, gender, count: 0 };
+            cur.count += count;
+            ageGenderCounts.set(key, cur);
+          }
+        }
+      });
+      if (country) byCountry.push({ region: country, percentage: countryTotal });
+      grand += countryTotal;
+    }
+
+    // Convert aggregated raw counts to percentages
+    if (grand > 0) {
+      out.demographic_distribution = [...ageGenderCounts.values()]
+        .map((d) => ({ age: d.age, gender: d.gender, percentage: +(d.count / grand * 100).toFixed(1) }))
+        .sort((a, b) => (a.age + a.gender).localeCompare(b.age + b.gender));
+      out.region_distribution = byCountry
+        .map((r) => ({ ...r, percentage: +(r.percentage / grand * 100).toFixed(1) }))
+        .sort((a, b) => b.percentage - a.percentage);
+    }
+  }
+
+  // Fallback: explicit demographic_distribution / region_distribution if present
+  if (!out.demographic_distribution) {
+    const demo = extractDemographics({ demographic_distribution: firstOf(json, 'demographic_distribution') } as Record<string, unknown>);
+    if (demo.length > 0) out.demographic_distribution = demo;
+  }
+  if (!out.region_distribution) {
+    const reg = extractRegions({ region_distribution: firstOf(json, 'region_distribution') ?? firstOf(json, 'delivery_by_region') } as Record<string, unknown>);
+    if (reg.length > 0) out.region_distribution = reg;
+  }
+
+  return out;
 }
 
 export function parseGraphQLResponse(json: unknown, jobId?: string): Ad[] {

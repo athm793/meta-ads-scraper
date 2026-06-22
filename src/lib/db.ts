@@ -4,10 +4,12 @@ import fs from 'fs';
 import type {
   Ad,
   Collection,
+  Tag,
   ScrapeJob,
   BulkJob,
   BulkCompany,
   SearchParams,
+  AdScopeFilters,
 } from '@/types/ads';
 
 const DB_DIR = path.join(process.cwd(), 'data');
@@ -37,6 +39,7 @@ function initSchema(db: Database.Database) {
       link_url TEXT,
       media_type TEXT DEFAULT 'unknown',
       media_urls TEXT DEFAULT '[]',
+      video_urls TEXT DEFAULT '[]',
       carousel_cards TEXT DEFAULT '[]',
       platforms TEXT DEFAULT '[]',
       status TEXT DEFAULT 'INACTIVE',
@@ -67,6 +70,21 @@ function initSchema(db: Database.Database) {
       created_at TEXT,
       color TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS tags (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      color TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS ad_tags (
+      ad_id TEXT NOT NULL,
+      tag_id TEXT NOT NULL,
+      PRIMARY KEY (ad_id, tag_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ad_tags_tag ON ad_tags(tag_id);
+    CREATE INDEX IF NOT EXISTS idx_ad_tags_ad ON ad_tags(ad_id);
 
     CREATE TABLE IF NOT EXISTS scrape_jobs (
       id TEXT PRIMARY KEY,
@@ -107,6 +125,38 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_ads_job ON ads(scrape_job_id);
     CREATE INDEX IF NOT EXISTS idx_bulk_companies_job ON bulk_job_companies(job_id);
   `);
+
+  // Additive migrations — safe to run every startup
+  const existingCols = (db.pragma('table_info(ads)') as { name: string }[]).map((c) => c.name);
+  if (!existingCols.includes('video_urls')) {
+    db.exec(`ALTER TABLE ads ADD COLUMN video_urls TEXT DEFAULT '[]'`);
+  }
+  const deepCols: Array<[string, string]> = [
+    ['deep_search_done', 'INTEGER DEFAULT 0'],
+    ['targeting_age_min', 'INTEGER'],
+    ['targeting_age_max', 'INTEGER'],
+    ['targeting_gender', 'TEXT'],
+    ['targeting_locations', "TEXT DEFAULT '[]'"],
+    ['targeting_interests', "TEXT DEFAULT '[]'"],
+    ['policy_status', 'TEXT'],
+    ['detail_fetched', 'INTEGER DEFAULT 0'],
+    ['total_reach', 'INTEGER'],
+    ['beneficiary', 'TEXT'],
+    ['payer', 'TEXT'],
+  ];
+  for (const [col, def] of deepCols) {
+    if (!existingCols.includes(col)) {
+      db.exec(`ALTER TABLE ads ADD COLUMN ${col} ${def}`);
+    }
+  }
+
+  const bulkCols = (db.pragma('table_info(bulk_jobs)') as { name: string }[]).map((c) => c.name);
+  if (!bulkCols.includes('archived')) {
+    db.exec(`ALTER TABLE bulk_jobs ADD COLUMN archived INTEGER DEFAULT 0`);
+  }
+  if (!bulkCols.includes('filters')) {
+    db.exec(`ALTER TABLE bulk_jobs ADD COLUMN filters TEXT DEFAULT '{}'`);
+  }
 }
 
 export function upsertAd(ad: Ad) {
@@ -114,23 +164,30 @@ export function upsertAd(ad: Ad) {
   db.prepare(`
     INSERT OR REPLACE INTO ads (
       id, advertiser_name, advertiser_page_id, body_variants, headline,
-      cta_text, link_url, media_type, media_urls, carousel_cards, platforms,
+      cta_text, link_url, media_type, media_urls, video_urls, carousel_cards, platforms,
       status, category, started_at, stopped_at, days_running, country, language,
       spend_min, spend_max, spend_currency, impressions_min, impressions_max,
       funding_entity, demographic_distribution, region_distribution,
-      ad_snapshot_url, saved, collection_id, scraped_at, scrape_job_id
+      ad_snapshot_url, saved, collection_id, scraped_at, scrape_job_id,
+      deep_search_done, targeting_age_min, targeting_age_max, targeting_gender,
+      targeting_locations, targeting_interests, policy_status,
+      detail_fetched, total_reach, beneficiary, payer
     ) VALUES (
       @id, @advertiser_name, @advertiser_page_id, @body_variants, @headline,
-      @cta_text, @link_url, @media_type, @media_urls, @carousel_cards, @platforms,
+      @cta_text, @link_url, @media_type, @media_urls, @video_urls, @carousel_cards, @platforms,
       @status, @category, @started_at, @stopped_at, @days_running, @country, @language,
       @spend_min, @spend_max, @spend_currency, @impressions_min, @impressions_max,
       @funding_entity, @demographic_distribution, @region_distribution,
-      @ad_snapshot_url, @saved, @collection_id, @scraped_at, @scrape_job_id
+      @ad_snapshot_url, @saved, @collection_id, @scraped_at, @scrape_job_id,
+      @deep_search_done, @targeting_age_min, @targeting_age_max, @targeting_gender,
+      @targeting_locations, @targeting_interests, @policy_status,
+      @detail_fetched, @total_reach, @beneficiary, @payer
     )
   `).run({
     ...ad,
     body_variants: JSON.stringify(ad.body_variants),
     media_urls: JSON.stringify(ad.media_urls),
+    video_urls: JSON.stringify(ad.video_urls ?? []),
     carousel_cards: JSON.stringify(ad.carousel_cards),
     platforms: JSON.stringify(ad.platforms),
     demographic_distribution: JSON.stringify(ad.demographic_distribution),
@@ -154,19 +211,35 @@ export function upsertAd(ad: Ad) {
     ad_snapshot_url: ad.ad_snapshot_url ?? null,
     collection_id: ad.collection_id ?? null,
     scrape_job_id: ad.scrape_job_id ?? null,
+    deep_search_done: ad.deep_search_done ? 1 : 0,
+    targeting_age_min: ad.targeting_age_min ?? null,
+    targeting_age_max: ad.targeting_age_max ?? null,
+    targeting_gender: ad.targeting_gender ?? null,
+    targeting_locations: JSON.stringify(ad.targeting_locations ?? []),
+    targeting_interests: JSON.stringify(ad.targeting_interests ?? []),
+    policy_status: ad.policy_status ?? null,
+    detail_fetched: ad.detail_fetched ? 1 : 0,
+    total_reach: ad.total_reach ?? null,
+    beneficiary: ad.beneficiary ?? null,
+    payer: ad.payer ?? null,
   });
 }
 
 function rowToAd(row: Record<string, unknown>): Ad {
   return {
-    ...(row as Omit<Ad, 'body_variants' | 'media_urls' | 'carousel_cards' | 'platforms' | 'demographic_distribution' | 'region_distribution' | 'saved'>),
+    ...(row as Omit<Ad, 'body_variants' | 'media_urls' | 'carousel_cards' | 'platforms' | 'demographic_distribution' | 'region_distribution' | 'saved' | 'targeting_locations' | 'targeting_interests'>),
     body_variants: JSON.parse(String(row.body_variants || '[]')),
     media_urls: JSON.parse(String(row.media_urls || '[]')),
+    video_urls: JSON.parse(String(row.video_urls || '[]')),
     carousel_cards: JSON.parse(String(row.carousel_cards || '[]')),
     platforms: JSON.parse(String(row.platforms || '[]')),
     demographic_distribution: JSON.parse(String(row.demographic_distribution || '[]')),
     region_distribution: JSON.parse(String(row.region_distribution || '[]')),
+    targeting_locations: JSON.parse(String(row.targeting_locations || '[]')),
+    targeting_interests: JSON.parse(String(row.targeting_interests || '[]')),
     saved: row.saved === 1,
+    deep_search_done: row.deep_search_done === 1,
+    detail_fetched: row.detail_fetched === 1,
   };
 }
 
@@ -176,6 +249,7 @@ export function queryAds(params: {
   status?: string;
   saved?: boolean;
   collection_id?: string;
+  tag_id?: string;
   job_id?: string;
   page?: number;
   limit?: number;
@@ -208,6 +282,10 @@ export function queryAds(params: {
     conditions.push(`collection_id = @collection_id`);
     bindings.collection_id = params.collection_id;
   }
+  if (params.tag_id) {
+    conditions.push(`id IN (SELECT ad_id FROM ad_tags WHERE tag_id = @tag_id)`);
+    bindings.tag_id = params.tag_id;
+  }
   if (params.job_id) {
     conditions.push(`scrape_job_id = @job_id`);
     bindings.job_id = params.job_id;
@@ -225,7 +303,17 @@ export function queryAds(params: {
   const total = (db.prepare(`SELECT COUNT(*) as count FROM ads ${where}`).get(bindings) as { count: number }).count;
   const rows = db.prepare(`SELECT * FROM ads ${where} ORDER BY ${orderBy} LIMIT ${limit} OFFSET ${offset}`).all(bindings) as Record<string, unknown>[];
 
-  return { ads: rows.map(rowToAd), total };
+  const ads = rows.map(rowToAd);
+  attachTags(ads);
+  return { ads, total };
+}
+
+// Lightweight pull of first-line + timestamp for hook trend analysis
+export function getHookSamples(): Array<{ body_variants: string; scraped_at: string; started_at: string | null }> {
+  const db = getDb();
+  return db.prepare(
+    `SELECT body_variants, scraped_at, started_at FROM ads WHERE body_variants IS NOT NULL AND body_variants != '[]'`
+  ).all() as Array<{ body_variants: string; scraped_at: string; started_at: string | null }>;
 }
 
 export function getAdById(id: string): Ad | null {
@@ -280,6 +368,80 @@ export function deleteCollection(id: string) {
   db.prepare('DELETE FROM collections WHERE id = ?').run(id);
 }
 
+// Tags
+export function getTags(): Tag[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT t.*, COUNT(at.ad_id) as ad_count
+    FROM tags t
+    LEFT JOIN ad_tags at ON at.tag_id = t.id
+    GROUP BY t.id
+    ORDER BY t.name COLLATE NOCASE ASC
+  `).all() as unknown as Tag[];
+}
+
+// Create (or return existing by name) — tag names are unique, case-insensitive
+export function createTag(name: string, color?: string): Tag {
+  const db = getDb();
+  const existing = db.prepare('SELECT * FROM tags WHERE name = ? COLLATE NOCASE').get(name) as Tag | undefined;
+  if (existing) return existing;
+  const id = crypto.randomUUID();
+  const created_at = new Date().toISOString();
+  db.prepare('INSERT INTO tags (id, name, color, created_at) VALUES (?, ?, ?, ?)').run(id, name, color ?? null, created_at);
+  return { id, name, color, created_at };
+}
+
+export function deleteTag(id: string) {
+  const db = getDb();
+  db.prepare('DELETE FROM ad_tags WHERE tag_id = ?').run(id);
+  db.prepare('DELETE FROM tags WHERE id = ?').run(id);
+}
+
+export function addTagToAd(adId: string, tagId: string) {
+  const db = getDb();
+  db.prepare('INSERT OR IGNORE INTO ad_tags (ad_id, tag_id) VALUES (?, ?)').run(adId, tagId);
+}
+
+export function removeTagFromAd(adId: string, tagId: string) {
+  const db = getDb();
+  db.prepare('DELETE FROM ad_tags WHERE ad_id = ? AND tag_id = ?').run(adId, tagId);
+}
+
+export function getAdTags(adId: string): Tag[] {
+  const db = getDb();
+  return db.prepare(`
+    SELECT t.* FROM tags t
+    JOIN ad_tags at ON at.tag_id = t.id
+    WHERE at.ad_id = ?
+    ORDER BY t.name COLLATE NOCASE ASC
+  `).all(adId) as unknown as Tag[];
+}
+
+// Fills ad.tags for a set of ads. Chunked so large result sets (e.g. a 10k
+// export) never blow past SQLite's bound-variable limit.
+function attachTags(ads: Ad[]): void {
+  if (ads.length === 0) return;
+  const db = getDb();
+  const byAd = new Map<string, Tag[]>();
+  const CHUNK = 400;
+  for (let i = 0; i < ads.length; i += CHUNK) {
+    const slice = ads.slice(i, i + CHUNK);
+    const placeholders = slice.map(() => '?').join(',');
+    const rows = db.prepare(`
+      SELECT at.ad_id as ad_id, t.id, t.name, t.color, t.created_at
+      FROM ad_tags at JOIN tags t ON t.id = at.tag_id
+      WHERE at.ad_id IN (${placeholders})
+      ORDER BY t.name COLLATE NOCASE ASC
+    `).all(...slice.map((a) => a.id)) as Array<{ ad_id: string } & Tag>;
+    for (const r of rows) {
+      const list = byAd.get(r.ad_id) ?? [];
+      list.push({ id: r.id, name: r.name, color: r.color, created_at: r.created_at });
+      byAd.set(r.ad_id, list);
+    }
+  }
+  for (const ad of ads) ad.tags = byAd.get(ad.id) ?? [];
+}
+
 // Scrape jobs
 export function createScrapeJob(params: SearchParams): string {
   const db = getDb();
@@ -309,12 +471,16 @@ export function getScrapeJobs(): ScrapeJob[] {
 }
 
 // Bulk jobs
-export function createBulkJob(name: string, companies: Array<{ company_name: string; website?: string }>): BulkJob {
+export function createBulkJob(
+  name: string,
+  companies: Array<{ company_name: string; website?: string }>,
+  filters?: AdScopeFilters
+): BulkJob {
   const db = getDb();
   const id = crypto.randomUUID();
   const created_at = new Date().toISOString();
-  db.prepare('INSERT INTO bulk_jobs (id, name, created_at, status, total_companies) VALUES (?, ?, ?, ?, ?)').run(
-    id, name, created_at, 'queued', companies.length
+  db.prepare('INSERT INTO bulk_jobs (id, name, created_at, status, total_companies, filters) VALUES (?, ?, ?, ?, ?, ?)').run(
+    id, name, created_at, 'queued', companies.length, JSON.stringify(filters ?? {})
   );
   const insertCompany = db.prepare(
     'INSERT INTO bulk_job_companies (id, job_id, company_name, website, status) VALUES (?, ?, ?, ?, ?)'
@@ -322,12 +488,44 @@ export function createBulkJob(name: string, companies: Array<{ company_name: str
   for (const c of companies) {
     insertCompany.run(crypto.randomUUID(), id, c.company_name, c.website ?? null, 'pending');
   }
-  return { id, name, created_at, status: 'queued', total_companies: companies.length, completed_companies: 0 };
+  return { id, name, created_at, status: 'queued', total_companies: companies.length, completed_companies: 0, filters: filters ?? {} };
+}
+
+function rowToBulkJob(row: Record<string, unknown> | undefined): BulkJob | null {
+  if (!row) return null;
+  let filters: AdScopeFilters = {};
+  try { filters = JSON.parse(String(row.filters || '{}')); } catch { /* default */ }
+  return { ...(row as unknown as BulkJob), filters };
 }
 
 export function getBulkJob(id: string): BulkJob | null {
   const db = getDb();
-  return db.prepare('SELECT * FROM bulk_jobs WHERE id = ?').get(id) as BulkJob | null;
+  return rowToBulkJob(db.prepare('SELECT * FROM bulk_jobs WHERE id = ?').get(id) as Record<string, unknown> | undefined);
+}
+
+export function getBulkJobStatus(id: string): string | null {
+  const db = getDb();
+  const row = db.prepare('SELECT status FROM bulk_jobs WHERE id = ?').get(id) as { status: string } | undefined;
+  return row?.status ?? null;
+}
+
+// When a stream restarts (resume / fresh open), any company left mid-flight as
+// 'scraping' is not actually being worked on — reset it so it gets re-queued.
+export function resetStuckBulkCompanies(jobId: string) {
+  const db = getDb();
+  db.prepare(`UPDATE bulk_job_companies SET status = 'pending' WHERE job_id = ? AND status = 'scraping'`).run(jobId);
+}
+
+// All ads scraped under a bulk job (ads are stored per-company via scrape_job_id)
+export function getAdsByBulkJob(jobId: string): Ad[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT a.* FROM ads a
+    JOIN bulk_job_companies c ON a.scrape_job_id = c.id
+    WHERE c.job_id = ?
+    ORDER BY a.advertiser_name, a.scraped_at DESC
+  `).all(jobId) as Record<string, unknown>[];
+  return rows.map(rowToAd);
 }
 
 export function getBulkJobCompanies(jobId: string): BulkCompany[] {
@@ -379,4 +577,27 @@ export function completeBulkJob(jobId: string) {
 export function updateBulkJobStatus(jobId: string, status: string) {
   const db = getDb();
   db.prepare('UPDATE bulk_jobs SET status = ? WHERE id = ?').run(status, jobId);
+}
+
+export function getBulkJobs(archived = false): BulkJob[] {
+  const db = getDb();
+  return db
+    .prepare('SELECT * FROM bulk_jobs WHERE COALESCE(archived, 0) = ? ORDER BY created_at DESC LIMIT 50')
+    .all(archived ? 1 : 0) as BulkJob[];
+}
+
+export function setBulkJobArchived(id: string, archived: boolean) {
+  const db = getDb();
+  db.prepare('UPDATE bulk_jobs SET archived = ? WHERE id = ?').run(archived ? 1 : 0, id);
+}
+
+export function deleteBulkJob(id: string) {
+  const db = getDb();
+  // Remove the job and its company rows. Scraped ads are keyed by the per-company
+  // scrape_job_id and are left intact (they may be saved or in collections).
+  const tx = db.transaction((jobId: string) => {
+    db.prepare('DELETE FROM bulk_job_companies WHERE job_id = ?').run(jobId);
+    db.prepare('DELETE FROM bulk_jobs WHERE id = ?').run(jobId);
+  });
+  tx(id);
 }

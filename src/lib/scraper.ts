@@ -1,18 +1,45 @@
 import type { Page } from 'playwright';
 import { launchBrowser, createContext, randomDelay } from './browser';
-import { parseGraphQLResponse } from './parser';
+import { parseGraphQLResponse, parseAdDetails } from './parser';
 import type { Ad, SearchParams } from '@/types/ads';
+
+// Captured "See ad details" (AdLibraryV3AdDetailsQuery) request, used to replay
+// the details query for every ad without re-rendering the page per ad.
+interface DetailSignature {
+  url: string;
+  form: Record<string, string>;   // parsed urlencoded body of the captured request
+  variablesKey: string;           // form key holding the JSON variables
+  lsd: string;                    // x-fb-lsd token (also present in form)
+}
+
+// Matches Meta's ad-details GraphQL query (e.g. AdLibraryV3AdDetailsQuery —
+// the version prefix changes over time, so match the stable "AdDetails" part).
+const DETAIL_QUERY_RE = /AdDetails/i;
+const DETAIL_CONCURRENCY = 5;
 
 const ADS_LIBRARY_BASE = 'https://www.facebook.com/ads/library/';
 
 function buildUrl(params: SearchParams): string {
-  const url = new URL(ADS_LIBRARY_BASE);
-
   const statusMap: Record<string, string> = {
     ACTIVE: 'active',
     INACTIVE: 'inactive',
     ALL: 'all',
   };
+
+  // Page-view mode: full advertiser library sorted by total impressions
+  if (params.page_id) {
+    const url = new URL(ADS_LIBRARY_BASE);
+    url.searchParams.set('active_status', statusMap[params.status ?? 'ALL'] ?? 'all');
+    url.searchParams.set('ad_type', 'all');
+    url.searchParams.set('country', params.country || 'ALL');
+    url.searchParams.set('search_type', 'page');
+    url.searchParams.set('view_all_page_id', params.page_id);
+    url.searchParams.set('sort_data[mode]', 'total_impressions');
+    url.searchParams.set('sort_data[direction]', 'desc');
+    return url.toString();
+  }
+
+  const url = new URL(ADS_LIBRARY_BASE);
   url.searchParams.set('active_status', statusMap[params.status ?? 'ALL'] ?? 'all');
   url.searchParams.set('ad_type', params.ad_type && params.ad_type !== 'unknown' ? params.ad_type : 'all');
   url.searchParams.set('country', params.country || 'ALL');
@@ -83,14 +110,145 @@ function extractFromHtml(html: string, jobId?: string, seen?: Set<string>): Ad[]
   return ads;
 }
 
+/**
+ * Triggers the "See ad details" panel on the first ad so Meta fires the
+ * AdLibraryAdDetailsV2Query, then captures that request's signature (doc_id,
+ * tokens, variable shape) for replay. Returns null if it can't be captured —
+ * callers must degrade gracefully (base ads only).
+ */
+async function captureDetailSignature(page: Page): Promise<DetailSignature | null> {
+  let captured: DetailSignature | null = null;
+
+  const onReq = (req: import('playwright').Request) => {
+    try {
+      if (req.method() !== 'POST') return;
+      const url = req.url();
+      if (!url.includes('/api/graphql')) return;
+      const post = req.postData() || '';
+      if (!DETAIL_QUERY_RE.test(post)) return;
+      const form: Record<string, string> = {};
+      new URLSearchParams(post).forEach((v, k) => { form[k] = v; });
+      // The variables key holds JSON referencing the ad archive id
+      const variablesKey = Object.keys(form).find((k) => {
+        const val = form[k];
+        return val.trim().startsWith('{') && /archive/i.test(val);
+      });
+      if (!variablesKey) return;
+      captured = { url, form, variablesKey, lsd: form.lsd || '' };
+    } catch { /* ignore */ }
+  };
+
+  page.on('request', onReq);
+  try {
+    // Click the first "See ad details" / "See summary details" control
+    const selectors = [
+      'div[role="button"]:has-text("See ad details")',
+      'div[role="button"]:has-text("See summary details")',
+      'a:has-text("See ad details")',
+      'span:has-text("See ad details")',
+    ];
+    for (const sel of selectors) {
+      const el = page.locator(sel).first();
+      if (await el.count() > 0 && await el.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await el.click({ timeout: 3000 }).catch(() => {});
+        break;
+      }
+    }
+    // Wait briefly for the details request to fire
+    for (let i = 0; i < 12 && !captured; i++) await randomDelay(250, 400);
+    await page.keyboard.press('Escape').catch(() => {});
+  } finally {
+    page.off('request', onReq);
+  }
+  return captured;
+}
+
+/** Builds the urlencoded body for one ad by swapping the archive/page ids. */
+function buildDetailBody(sig: DetailSignature, ad: Ad): string {
+  let vars: Record<string, unknown>;
+  try { vars = JSON.parse(sig.form[sig.variablesKey]); } catch { return ''; }
+  for (const k of Object.keys(vars)) {
+    if (/archive/i.test(k)) vars[k] = ad.id;
+    else if (/pageid|page_id/i.test(k) && ad.advertiser_page_id) vars[k] = ad.advertiser_page_id;
+  }
+  const form = { ...sig.form, [sig.variablesKey]: JSON.stringify(vars) };
+  return new URLSearchParams(form).toString();
+}
+
+function parseMaybePrefixed(text: string): unknown {
+  if (!text) return null;
+  const cleaned = text.replace(/^for \(;;\);/, '').trim();
+  try { return JSON.parse(cleaned); } catch { /* try line-delimited */ }
+  for (const line of cleaned.split('\n')) {
+    const t = line.trim();
+    if (t[0] === '{') { try { return JSON.parse(t); } catch { /* skip */ } }
+  }
+  return null;
+}
+
+/**
+ * Enriches a batch of ads with "See ad details" data. The details query must be
+ * replayed from inside the page (real browser headers/cookies) — replaying via
+ * a Node request context gets rejected by Meta. Runs the fetches in-page with
+ * bounded concurrency. Mutates ads in place.
+ */
+async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promise<void> {
+  const jobs = batch
+    .map((ad) => ({ id: ad.id, body: buildDetailBody(sig, ad) }))
+    .filter((j) => j.body);
+  if (jobs.length === 0) return;
+
+  // Run all replays inside the page event loop with a concurrency cap
+  const results = await page.evaluate(
+    async ({ jobs, url, lsd, concurrency }) => {
+      const out: Array<{ id: string; text: string }> = [];
+      const queue = [...jobs];
+      async function worker() {
+        while (queue.length) {
+          const job = queue.shift();
+          if (!job) break;
+          try {
+            const r = await fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-fb-lsd': lsd },
+              body: job.body,
+              credentials: 'include',
+            });
+            out.push({ id: job.id, text: await r.text() });
+          } catch {
+            out.push({ id: job.id, text: '' });
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+      return out;
+    },
+    { jobs, url: sig.url, lsd: sig.lsd, concurrency: DETAIL_CONCURRENCY }
+  );
+
+  const byId = new Map(batch.map((a) => [a.id, a]));
+  for (const res of results) {
+    const ad = byId.get(res.id);
+    if (!ad) continue;
+    const json = parseMaybePrefixed(res.text);
+    if (!json) continue;
+    const detail = parseAdDetails(json);
+    if (detail.detail_fetched) {
+      Object.assign(ad, detail);
+      ad.deep_search_done = true;
+    }
+  }
+}
+
 export async function* scrapeAds(
   params: SearchParams,
-  jobId?: string
+  jobId?: string,
+  externalSeen?: Set<string>
 ): AsyncGenerator<Ad[], void, unknown> {
-  if (!params.keyword && !params.advertiser) return;
+  if (!params.keyword && !params.advertiser && !params.page_id) return;
 
   const limit = params.limit || 100;
-  const seen = new Set<string>();
+  const seen = externalSeen ?? new Set<string>();
   const collectedAds: Ad[] = [];
   const pendingJsons: unknown[] = [];
 
@@ -142,13 +300,27 @@ export async function* scrapeAds(
     await handleCookieConsent(page);
     await randomDelay(1000, 2000);
 
+    // Deep "See ad details" enrichment: capture the details query once, then
+    // replay it per ad. Degrades gracefully if the signature can't be captured.
+    let detailSig: DetailSignature | null = null;
+    if (params.fetch_details) {
+      detailSig = await captureDetailSignature(page);
+      console.log('[scraper] detail signature captured:', !!detailSig);
+    }
+    async function out(batch: Ad[]): Promise<Ad[]> {
+      if (detailSig && batch.length) {
+        await enrichBatch(page, detailSig, batch).catch(() => {});
+      }
+      return batch;
+    }
+
     // Extract initial batch from raw SSR HTML (captured in response handler above)
     const initialBatch = rawHtml ? extractFromHtml(rawHtml, jobId, seen) : [];
     console.log('[scraper] initial HTML batch:', initialBatch.length, 'ads (rawHtml captured:', !!rawHtml, ')');
 
     if (initialBatch.length > 0) {
       collectedAds.push(...initialBatch);
-      yield initialBatch;
+      yield await out(initialBatch);
     }
 
     // Scroll to trigger pagination GraphQL POSTs
@@ -167,7 +339,7 @@ export async function* scrapeAds(
       const batch = flushPending(pendingJsons, jobId, seen);
       if (batch.length > 0) {
         collectedAds.push(...batch);
-        yield batch;
+        yield await out(batch);
         noNewCount = 0;
       } else {
         noNewCount++;
@@ -179,7 +351,7 @@ export async function* scrapeAds(
     const last = flushPending(pendingJsons, jobId, seen);
     if (last.length > 0) {
       collectedAds.push(...last);
-      yield last;
+      yield await out(last);
     }
 
     console.log('[scraper] done, total:', collectedAds.length);
@@ -219,5 +391,40 @@ export async function scrapeAdvertiser(
   )) {
     ads.push(...batch);
   }
+  return ads;
+}
+
+/**
+ * Deep search: pass 1 finds the advertiser page ID, pass 2 scrapes the full
+ * page library sorted by total impressions. Both passes share a dedup Set so
+ * cross-pass duplicates are removed automatically.
+ */
+export async function scrapeAdvertiserDeep(
+  advertiserName: string,
+  jobId?: string
+): Promise<Ad[]> {
+  const seen = new Set<string>();
+  const ads: Ad[] = [];
+  let pageId: string | undefined;
+
+  for await (const batch of scrapeAds(
+    { advertiser: advertiserName, status: 'ALL', limit: 50 },
+    jobId,
+    seen
+  )) {
+    ads.push(...batch);
+    if (!pageId) pageId = batch.find((a) => a.advertiser_page_id)?.advertiser_page_id;
+  }
+
+  if (pageId) {
+    for await (const batch of scrapeAds(
+      { page_id: pageId, status: 'ALL', limit: 200 },
+      jobId,
+      seen
+    )) {
+      ads.push(...batch);
+    }
+  }
+
   return ads;
 }

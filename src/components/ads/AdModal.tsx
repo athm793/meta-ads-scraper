@@ -6,15 +6,27 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Ad } from '@/types/ads';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Download, ExternalLink, Copy, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
+import { Download, ExternalLink, Copy, ChevronLeft, ChevronRight, MapPin, Users, Target } from 'lucide-react';
 import { useState } from 'react';
+import { motion } from 'framer-motion';
 import { format } from 'date-fns';
+import { TagEditor } from './TagEditor';
+import { adsToCsv, exportFilename } from '@/lib/exportCsv';
 
 interface AdModalProps {
   ad: Ad | null;
   open: boolean;
   onClose: () => void;
+}
+
+function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="space-y-0.5">
+      <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wide">{label}</p>
+      <p className="text-sm font-medium">{value}</p>
+    </div>
+  );
 }
 
 export function AdModal({ ad, open, onClose }: AdModalProps) {
@@ -23,108 +35,197 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
   if (!ad) return null;
 
   const hasDemo = ad.demographic_distribution.length > 0 || ad.region_distribution.length > 0;
+  const hasTargeting = ad.deep_search_done && (
+    ad.targeting_age_min != null ||
+    ad.targeting_locations?.length ||
+    ad.targeting_interests?.length ||
+    ad.policy_status
+  );
+  const isVideo = ad.media_type === 'video' || ad.media_type === 'multi_video';
+  const videoSrc = ad.video_urls?.[0];
+  const thumbSrc = ad.media_urls?.[0];
 
   function copyText(text: string) {
     navigator.clipboard.writeText(text).catch(() => {});
   }
 
+  function exportAd(format: 'csv' | 'json') {
+    const data = format === 'csv' ? adsToCsv([ad!]) : JSON.stringify(ad, null, 2);
+    const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
+    const name = exportFilename('ad', ad!.advertiser_name).replace(/\.csv$/, format === 'json' ? '.json' : '.csv');
+    const url = URL.createObjectURL(new Blob([data], { type: mime }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[90vh] p-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-0">
-          <div className="flex items-center justify-between">
-            <DialogTitle className="text-lg font-semibold">{ad.advertiser_name}</DialogTitle>
-            <div className="flex gap-2">
-              <Badge variant={ad.status === 'ACTIVE' ? 'default' : 'secondary'}
-                className={ad.status === 'ACTIVE' ? 'bg-green-500' : ''}
+      <DialogContent className="w-[calc(100vw-1.5rem)] max-w-5xl max-h-[90vh] p-0 overflow-hidden">
+        <DialogHeader className="px-5 sm:px-6 pt-5 sm:pt-6 pb-0">
+          <div className="flex items-center justify-between gap-3 pr-8">
+            <DialogTitle className="text-base font-semibold truncate min-w-0">{ad.advertiser_name}</DialogTitle>
+            <div className="flex items-center gap-2 shrink-0">
+              <Badge
+                className={`text-[10px] px-1.5 py-0 h-5 font-medium ${
+                  ad.status === 'ACTIVE'
+                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20'
+                    : 'bg-muted text-muted-foreground border-transparent'
+                }`}
               >
-                {ad.status}
+                {ad.status === 'ACTIVE' ? (
+                  <><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block mr-1 animate-pulse" />Active</>
+                ) : 'Inactive'}
               </Badge>
-              <Button size="sm" variant="outline" onClick={() => window.open(ad.ad_snapshot_url, '_blank')}>
-                <ExternalLink className="w-3.5 h-3.5 mr-1" /> Open Original
+              <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => exportAd('csv')} title="Export this ad as CSV">
+                <Download className="w-3 h-3 sm:mr-1" /> <span className="hidden sm:inline">Export</span>
               </Button>
+              {ad.ad_snapshot_url && (
+                <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => window.open(ad.ad_snapshot_url, '_blank')}>
+                  <ExternalLink className="w-3 h-3 sm:mr-1" /> <span className="hidden sm:inline">Open Original</span>
+                </Button>
+              )}
             </div>
           </div>
         </DialogHeader>
 
+        <div className="px-5 sm:px-6 pt-3">
+          <TagEditor adId={ad.id} />
+        </div>
+
         <Tabs defaultValue="creative" className="flex-1 overflow-hidden">
-          <TabsList className="mx-6 mt-4">
-            <TabsTrigger value="creative">Creative</TabsTrigger>
-            <TabsTrigger value="copy">Copy</TabsTrigger>
-            <TabsTrigger value="metadata">Metadata</TabsTrigger>
-            {hasDemo && <TabsTrigger value="demographics">Demographics</TabsTrigger>}
+          <TabsList className="mx-6 mt-4 h-8">
+            <TabsTrigger value="creative" className="text-xs">Creative</TabsTrigger>
+            <TabsTrigger value="copy" className="text-xs">Copy</TabsTrigger>
+            <TabsTrigger value="metadata" className="text-xs">Metadata</TabsTrigger>
+            {hasDemo && <TabsTrigger value="demographics" className="text-xs">Demographics</TabsTrigger>}
+            {hasTargeting && <TabsTrigger value="targeting" className="text-xs">Targeting</TabsTrigger>}
           </TabsList>
 
-          <ScrollArea className="h-[calc(90vh-180px)]">
-            {/* Creative Tab */}
+          <ScrollArea className="h-[calc(90vh-230px)]">
+            {/* Creative */}
             <TabsContent value="creative" className="p-6 mt-0">
               {ad.media_type === 'carousel' && ad.carousel_cards.length > 0 ? (
                 <div className="space-y-3">
-                  <div className="relative bg-muted rounded-lg overflow-hidden aspect-video">
+                  <div className="relative bg-muted rounded-xl overflow-hidden aspect-video">
                     {ad.carousel_cards[carouselIdx]?.image_url ? (
-                      <img src={ad.carousel_cards[carouselIdx].image_url} alt={`Slide ${carouselIdx + 1}`} className="w-full h-full object-contain" />
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={ad.carousel_cards[carouselIdx].image_url}
+                        alt={`Slide ${carouselIdx + 1}`}
+                        className="w-full h-full object-contain"
+                      />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-muted-foreground">No image</div>
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">No image</div>
                     )}
-                    <div className="absolute inset-y-0 left-2 flex items-center">
-                      <button onClick={() => setCarouselIdx(Math.max(0, carouselIdx - 1))} className="bg-black/50 rounded-full p-1" disabled={carouselIdx === 0}>
-                        <ChevronLeft className="w-5 h-5 text-white" />
-                      </button>
-                    </div>
-                    <div className="absolute inset-y-0 right-2 flex items-center">
-                      <button onClick={() => setCarouselIdx(Math.min(ad.carousel_cards.length - 1, carouselIdx + 1))} className="bg-black/50 rounded-full p-1" disabled={carouselIdx === ad.carousel_cards.length - 1}>
-                        <ChevronRight className="w-5 h-5 text-white" />
-                      </button>
-                    </div>
-                    <div className="absolute bottom-2 inset-x-0 flex justify-center gap-1">
-                      {ad.carousel_cards.map((_, i) => (
-                        <button key={i} onClick={() => setCarouselIdx(i)}
-                          className={`w-1.5 h-1.5 rounded-full ${i === carouselIdx ? 'bg-white' : 'bg-white/40'}`}
-                        />
-                      ))}
-                    </div>
+                    {ad.carousel_cards.length > 1 && (
+                      <>
+                        <div className="absolute inset-y-0 left-2 flex items-center">
+                          <button
+                            onClick={() => setCarouselIdx(Math.max(0, carouselIdx - 1))}
+                            disabled={carouselIdx === 0}
+                            className="bg-black/60 rounded-full p-1 disabled:opacity-30 transition-opacity"
+                          >
+                            <ChevronLeft className="w-5 h-5 text-white" />
+                          </button>
+                        </div>
+                        <div className="absolute inset-y-0 right-2 flex items-center">
+                          <button
+                            onClick={() => setCarouselIdx(Math.min(ad.carousel_cards.length - 1, carouselIdx + 1))}
+                            disabled={carouselIdx === ad.carousel_cards.length - 1}
+                            className="bg-black/60 rounded-full p-1 disabled:opacity-30 transition-opacity"
+                          >
+                            <ChevronRight className="w-5 h-5 text-white" />
+                          </button>
+                        </div>
+                        <div className="absolute bottom-2 inset-x-0 flex justify-center gap-1">
+                          {ad.carousel_cards.map((_, i) => (
+                            <button
+                              key={i}
+                              onClick={() => setCarouselIdx(i)}
+                              className={`w-1.5 h-1.5 rounded-full transition-colors ${i === carouselIdx ? 'bg-white' : 'bg-white/40'}`}
+                            />
+                          ))}
+                        </div>
+                      </>
+                    )}
                   </div>
                   {ad.carousel_cards[carouselIdx]?.title && (
-                    <p className="font-medium">{ad.carousel_cards[carouselIdx].title}</p>
+                    <p className="font-medium text-sm">{ad.carousel_cards[carouselIdx].title}</p>
                   )}
                   {ad.carousel_cards[carouselIdx]?.body && (
                     <p className="text-sm text-muted-foreground">{ad.carousel_cards[carouselIdx].body}</p>
                   )}
                   <p className="text-xs text-muted-foreground">{carouselIdx + 1} / {ad.carousel_cards.length} slides</p>
                 </div>
-              ) : ad.media_urls[0] ? (
+              ) : isVideo ? (
                 <div className="space-y-3">
-                  <div className="relative bg-muted rounded-lg overflow-hidden">
-                    {ad.media_type === 'video' || ad.media_type === 'multi_video' ? (
-                      <video src={ad.media_urls[0]} controls className="w-full max-h-96 object-contain" />
+                  <div className="rounded-xl overflow-hidden bg-black">
+                    {videoSrc ? (
+                      <video src={videoSrc} poster={thumbSrc} controls className="w-full max-h-96 object-contain" playsInline />
+                    ) : thumbSrc ? (
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={thumbSrc} alt="Video thumbnail" className="w-full max-h-96 object-contain" />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                          <p className="text-white/70 text-sm">Video not available for playback</p>
+                        </div>
+                      </div>
                     ) : (
-                      <img src={ad.media_urls[0]} alt="Ad creative" className="w-full max-h-96 object-contain" />
+                      <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">No video available</div>
                     )}
                   </div>
+                  {videoSrc && (
+                    <a
+                      href={`/api/download?url=${encodeURIComponent(videoSrc)}`}
+                      download
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download Video
+                    </a>
+                  )}
+                </div>
+              ) : thumbSrc ? (
+                <div className="space-y-3">
+                  <div className="relative bg-muted rounded-xl overflow-hidden">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={thumbSrc} alt="Ad creative" className="w-full max-h-96 object-contain" />
+                  </div>
                   <a
-                    href={`/api/download?url=${encodeURIComponent(ad.media_urls[0])}`}
+                    href={`/api/download?url=${encodeURIComponent(thumbSrc)}`}
                     download
-                    className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
                   >
-                    <Download className="w-3.5 h-3.5" /> Download Creative
+                    <Download className="w-3.5 h-3.5" /> Download Image
                   </a>
                 </div>
               ) : (
-                <div className="flex items-center justify-center h-40 text-muted-foreground">No creative available</div>
+                <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">No creative available</div>
               )}
             </TabsContent>
 
-            {/* Copy Tab */}
+            {/* Copy */}
             <TabsContent value="copy" className="p-6 mt-0 space-y-4">
+              {ad.body_variants.length === 0 && (
+                <p className="text-sm text-muted-foreground">No copy available</p>
+              )}
               {ad.body_variants.map((body, i) => (
                 <div key={i} className="space-y-1">
                   {ad.body_variants.length > 1 && (
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Variant {i + 1}</p>
                   )}
-                  <div className="relative group bg-muted rounded-lg p-4 text-sm whitespace-pre-wrap">
+                  <div className="relative group bg-muted/50 border border-border/50 rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
                     {body}
-                    <Button size="icon" variant="ghost" className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100"
-                      onClick={() => copyText(body)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => copyText(body)}
+                    >
                       <Copy className="w-3.5 h-3.5" />
                     </Button>
                   </div>
@@ -133,10 +234,14 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
               {ad.headline && (
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Headline</p>
-                  <div className="relative group bg-muted rounded-lg p-3 font-medium text-sm">
+                  <div className="relative group bg-muted/50 border border-border/50 rounded-lg p-3 font-medium text-sm">
                     {ad.headline}
-                    <Button size="icon" variant="ghost" className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100"
-                      onClick={() => copyText(ad.headline!)}>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="absolute top-1 right-1 h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => copyText(ad.headline!)}
+                    >
                       <Copy className="w-3 h-3" />
                     </Button>
                   </div>
@@ -145,57 +250,115 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
               {ad.cta_text && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">CTA</p>
-                  <Badge variant="outline" className="text-sm">{ad.cta_text}</Badge>
+                  <Badge variant="outline">{ad.cta_text}</Badge>
                 </div>
               )}
               {ad.link_url && (
                 <div>
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Landing URL</p>
-                  <a href={ad.link_url} target="_blank" rel="noopener noreferrer"
-                    className="text-sm text-primary underline break-all hover:opacity-80">
+                  <a
+                    href={ad.link_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm text-primary underline break-all hover:opacity-80"
+                  >
                     {ad.link_url}
                   </a>
                 </div>
               )}
             </TabsContent>
 
-            {/* Metadata Tab */}
+            {/* Metadata */}
             <TabsContent value="metadata" className="p-6 mt-0">
               <div className="grid grid-cols-2 gap-4 text-sm">
-                {[
-                  ['Status', ad.status],
-                  ['Media Type', ad.media_type],
-                  ['Platforms', ad.platforms.join(', ') || '—'],
-                  ['Days Running', ad.days_running != null ? `${ad.days_running} days` : '—'],
-                  ['Started', ad.started_at ? format(new Date(ad.started_at), 'MMM d, yyyy') : '—'],
-                  ['Stopped', ad.stopped_at ? format(new Date(ad.stopped_at), 'MMM d, yyyy') : '—'],
-                  ['Spend Range', ad.spend_min != null ? `${ad.spend_currency || '$'}${ad.spend_min.toLocaleString()} – ${ad.spend_currency || '$'}${ad.spend_max?.toLocaleString()}` : 'N/A'],
-                  ['Impressions', ad.impressions_min != null ? `${ad.impressions_min.toLocaleString()} – ${ad.impressions_max?.toLocaleString()}` : 'N/A'],
-                  ['Funding Entity', ad.funding_entity || 'N/A'],
-                  ['Country', ad.country || '—'],
-                  ['Language', ad.language || '—'],
-                  ['Scraped', format(new Date(ad.scraped_at), 'MMM d, yyyy HH:mm')],
-                ].map(([label, value]) => (
-                  <div key={label} className="space-y-0.5">
-                    <p className="text-xs text-muted-foreground font-medium">{label}</p>
-                    <p className="font-medium">{value}</p>
-                  </div>
-                ))}
+                <MetaRow label="Status" value={ad.status} />
+                <MetaRow label="Media Type" value={ad.media_type} />
+                <MetaRow label="Platforms" value={ad.platforms.join(', ') || '—'} />
+                <MetaRow label="Days Running" value={ad.days_running != null ? `${ad.days_running} days` : '—'} />
+                <MetaRow label="Started" value={ad.started_at ? format(new Date(ad.started_at), 'MMM d, yyyy') : '—'} />
+                <MetaRow label="Stopped" value={ad.stopped_at ? format(new Date(ad.stopped_at), 'MMM d, yyyy') : '—'} />
+                <MetaRow
+                  label="Spend Range"
+                  value={ad.spend_min != null
+                    ? `${ad.spend_currency || '$'}${ad.spend_min.toLocaleString()} – ${ad.spend_currency || '$'}${ad.spend_max?.toLocaleString()}`
+                    : 'N/A'}
+                />
+                <MetaRow
+                  label="Impressions"
+                  value={ad.impressions_min != null
+                    ? `${ad.impressions_min.toLocaleString()} – ${ad.impressions_max?.toLocaleString()}`
+                    : 'N/A'}
+                />
+                <MetaRow label="Funding Entity" value={ad.funding_entity || 'N/A'} />
+                <MetaRow label="Country" value={ad.country || '—'} />
+                <MetaRow label="Language" value={ad.language || '—'} />
+                <MetaRow label="Scraped" value={format(new Date(ad.scraped_at), 'MMM d, yyyy HH:mm')} />
               </div>
+
+              {/* "See ad details" / EU transparency */}
+              {ad.detail_fetched && (
+                <div className="mt-5 pt-4 border-t border-border/40">
+                  <p className="text-xs font-medium text-violet-400 uppercase tracking-wide mb-3 flex items-center gap-1.5">
+                    <Target className="w-3.5 h-3.5" /> Ad Details (EU transparency)
+                  </p>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <MetaRow label="Total Reach (EU)" value={ad.total_reach != null ? ad.total_reach.toLocaleString() : '—'} />
+                    <MetaRow label="Beneficiary" value={ad.beneficiary || '—'} />
+                    <MetaRow label="Payer" value={ad.payer || '—'} />
+                  </div>
+                  {ad.total_reach == null && ad.region_distribution.length === 0 && (
+                    <p className="text-xs text-muted-foreground/60 mt-2">
+                      No EU breakdown available — Meta only publishes reach/demographics for ads that ran in the EU.
+                    </p>
+                  )}
+                </div>
+              )}
             </TabsContent>
 
-            {/* Demographics Tab */}
+            {/* Demographics */}
             {hasDemo && (
               <TabsContent value="demographics" className="p-6 mt-0 space-y-6">
                 {ad.demographic_distribution.length > 0 && (
                   <div>
-                    <p className="text-sm font-medium mb-3">Age & Gender Distribution</p>
-                    <ResponsiveContainer width="100%" height={200}>
-                      <BarChart data={ad.demographic_distribution}>
-                        <XAxis dataKey="age" tick={{ fontSize: 11 }} />
-                        <YAxis tickFormatter={(v) => `${v}%`} tick={{ fontSize: 11 }} />
-                        <Tooltip formatter={(v) => `${v}%`} />
-                        <Bar dataKey="percentage" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    <div className="flex items-center gap-4 mb-3">
+                      <p className="text-sm font-medium">Age &amp; Gender Distribution</p>
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="w-2.5 h-2.5 rounded-sm" style={{ background: 'var(--color-chart-2)' }} /> Male
+                      </span>
+                      <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="w-2.5 h-2.5 rounded-sm" style={{ background: 'var(--color-chart-5)' }} /> Female
+                      </span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={ad.demographic_distribution} margin={{ top: 4, right: 8, bottom: 4, left: -8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
+                        <XAxis
+                          dataKey="age"
+                          tick={{ fontSize: 11, fill: 'var(--color-muted-foreground)' }}
+                          stroke="var(--color-border)"
+                        />
+                        <YAxis
+                          tickFormatter={(v) => `${v}%`}
+                          tick={{ fontSize: 11, fill: 'var(--color-muted-foreground)' }}
+                          stroke="var(--color-border)"
+                        />
+                        <Tooltip
+                          cursor={{ fill: 'var(--color-muted)', opacity: 0.3 }}
+                          formatter={(v, _n, item) => [`${v}%`, item?.payload?.gender ?? '']}
+                          labelFormatter={(l) => `Age ${l}`}
+                          contentStyle={{
+                            background: 'var(--color-popover)',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: 8,
+                            fontSize: 12,
+                            color: 'var(--color-popover-foreground)',
+                          }}
+                        />
+                        <Bar dataKey="percentage" radius={[4, 4, 0, 0]}>
+                          {ad.demographic_distribution.map((d, i) => (
+                            <Cell key={i} fill={d.gender === 'female' ? 'var(--color-chart-5)' : 'var(--color-chart-2)'} />
+                          ))}
+                        </Bar>
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -206,15 +369,79 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                     <div className="space-y-2">
                       {ad.region_distribution.slice(0, 10).map((r) => (
                         <div key={r.region} className="flex items-center gap-3">
-                          <span className="text-sm w-32 truncate">{r.region}</span>
-                          <div className="flex-1 bg-muted rounded-full h-2">
-                            <div className="bg-primary rounded-full h-2" style={{ width: `${r.percentage}%` }} />
+                          <span className="text-sm w-12 shrink-0 truncate">{r.region}</span>
+                          <div className="flex-1 min-w-0 bg-muted rounded-full h-1.5">
+                            <motion.div
+                              className="bg-primary rounded-full h-1.5"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${r.percentage}%` }}
+                              transition={{ type: 'spring', stiffness: 200, damping: 25, delay: 0.1 }}
+                            />
                           </div>
-                          <span className="text-xs text-muted-foreground w-12 text-right">{r.percentage.toFixed(1)}%</span>
+                          <span className="text-xs text-muted-foreground w-12 shrink-0 text-right tabular-nums">{r.percentage.toFixed(1)}%</span>
                         </div>
                       ))}
                     </div>
                   </div>
+                )}
+              </TabsContent>
+            )}
+
+            {/* Deep Search — Targeting */}
+            {hasTargeting && (
+              <TabsContent value="targeting" className="p-6 mt-0 space-y-5">
+                <div className="flex items-center gap-2 text-xs text-violet-400 mb-1">
+                  <Target className="w-3.5 h-3.5" />
+                  <span className="font-medium uppercase tracking-wide">Deep Search Data</span>
+                </div>
+
+                {(ad.targeting_age_min != null || ad.targeting_age_max != null || ad.targeting_gender) && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                      <Users className="w-3 h-3" /> Audience
+                    </p>
+                    <div className="grid grid-cols-2 gap-3">
+                      {(ad.targeting_age_min != null || ad.targeting_age_max != null) && (
+                        <MetaRow
+                          label="Age Range"
+                          value={`${ad.targeting_age_min ?? '?'} – ${ad.targeting_age_max ?? '?'}`}
+                        />
+                      )}
+                      {ad.targeting_gender && (
+                        <MetaRow label="Gender" value={ad.targeting_gender} />
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {ad.targeting_locations && ad.targeting_locations.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                      <MapPin className="w-3 h-3" /> Locations
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {ad.targeting_locations.map((loc) => (
+                        <Badge key={loc} variant="outline" className="text-xs">{loc}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {ad.targeting_interests && ad.targeting_interests.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+                      <Target className="w-3 h-3" /> Interests &amp; Behaviors
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {ad.targeting_interests.map((interest) => (
+                        <Badge key={interest} variant="secondary" className="text-xs">{interest}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {ad.policy_status && (
+                  <MetaRow label="Policy Status" value={ad.policy_status} />
                 )}
               </TabsContent>
             )}
