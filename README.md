@@ -19,7 +19,7 @@ The Meta Ad Library is public but painful to research at scale: no bulk export, 
 
 ### 🔎 Search
 - **Keyword** search (matches ad copy) and **advertiser / page** search.
-- **Advertiser typeahead** — start typing a brand and pick the matching Meta page from a live dropdown (logo, verified badge, category, follower count), then scrape that exact page's ads instead of a fuzzy keyword match.
+- **Advertiser typeahead** — start typing a brand and pick the matching Meta page from a live dropdown (logo, verified badge, **Facebook + Instagram handles**, follower counts, category), then scrape that exact page's ads instead of a fuzzy keyword match.
 - **Deep search is always on** — every search scrapes the advertiser's full library sorted by impressions and pulls the "See ad details" data for every ad. No toggle to forget.
 - Pre-scrape filters: country, language, category (incl. political/issue, housing, employment, credit), media type, platform, status (active/inactive), date range, and result cap.
 - **Persistent filters** — your filter and option choices are remembered between runs (and the active tab and last job survive a refresh).
@@ -53,15 +53,15 @@ A swipe-file and analytics workbench built from the opening line of every ad:
 - Click any hook to **jump to its ad**. Copy individually or export the whole swipe file to CSV.
 
 ### 🏢 Bulk Company Intelligence
-Check the Meta ad activity of a whole list of companies at once:
-- Upload a **CSV** (with automatic column mapping) or paste a list — **deduplicated** on import, with a compact summary instead of re-dumping the whole file.
-- **Brand-page matching, not just keyword** — for each company the scraper resolves the actual Meta advertiser page. Supply a **country** to look up the brand in and an optional **company type / category** column so it picks the *right* page when several brands share a name, instead of grabbing the first match.
+Check the Meta ad activity of a whole list of companies at once, via a guided upload wizard:
+- Upload a **CSV** (with automatic column mapping) — **deduplicated** on import, with a compact summary instead of re-dumping the whole file.
+- **Deterministic brand matching by social handle** — instead of guessing by name, the scraper opens each company's **website**, reads the Facebook/Instagram handle it links to, and matches that *exact* handle against Meta's advertiser pages (their handle is shown in the typeahead). It's an identity match, not a name guess, so it never scrapes the wrong same-named brand. A company it can't verify this way is flagged **Needs review** rather than mis-scraped. (A **Website** column is required for brand matching; an optional **Page URL / ID** column is an exact-page override; **Keyword** mode is available when you don't need a specific page.)
 - Scrapes companies **in parallel** with a configurable **1–10 workers** (default 4; your setting is remembered between runs).
-- Per-company results: matched page name, active/inactive ad counts, ad types, platforms, spend range, last-ad date.
+- Per-company results: matched page + verified handle, active/inactive ad counts, ad types, platforms, spend range, last-ad date.
 - **Shared deduplication** across companies.
 - **Scope filters** per job: status, media types, platforms, and optional "fetch ad details".
 - Full **job control** — pause, resume, stop, archive, and delete — from both the job list and inside a job, with live status updates.
-- Job history with live progress, and exports for **company summaries** and **per-ad data (with details)**.
+- Job history with live progress, and exports for **company summaries** and **per-ad data (with details)** — both include each brand's matched **Facebook / Instagram username** and how it was matched.
 
 ### 📤 Exports
 - CSV (with a **UTF-8 BOM** so Excel renders emojis and accents correctly) and JSON.
