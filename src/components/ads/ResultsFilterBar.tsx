@@ -100,7 +100,7 @@ export function ResultsFilterBar({ filters, onChange, sortBy, onSortChange, show
             {dirty ? `${shownCount} of ${totalCount}` : `${totalCount}`} ads
           </span>
           {newCount > 0 && (
-            <Badge className="bg-blue-500/15 text-blue-400 border-blue-500/20 text-xs">{newCount} new</Badge>
+            <Badge className="bg-red-500/15 text-red-400 border-red-500/20 text-xs">{newCount} new</Badge>
           )}
           <span className="text-xs text-muted-foreground">Sort:</span>
           <Select value={sortBy} onValueChange={(v) => v && onSortChange(v)}>

@@ -23,7 +23,7 @@ import { adsToCsv, exportFilename } from '@/lib/exportCsv';
 import type { Ad, SearchParams, Collection, Tag, BulkCompany, BulkJob, AdvertiserSuggestion } from '@/types/ads';
 import {
   Search, BookMarked, Users, Zap, FolderPlus, Download,
-  Square, Layers, PanelLeftOpen,
+  Square, PanelLeftOpen,
 } from 'lucide-react';
 
 const DEFAULT_PARAMS: SearchParams = {
@@ -46,7 +46,6 @@ export default function HomePage() {
   const [advertiser, setAdvertiser] = useState('');
   const [filterParams, setFilterParams] = useState<SearchParams>(DEFAULT_PARAMS);
   const [sortBy, setSortBy] = useState('scraped_at');
-  const [deepSearch, setDeepSearch] = useState(false);
   const [resultFilters, setResultFilters] = useState<ResultFilters>(EMPTY_RESULT_FILTERS);
   const [searchPage, setSearchPage] = useState(1);
 
@@ -127,8 +126,8 @@ export default function HomePage() {
       ...filterParams,
       keyword: keyword || undefined,
       advertiser: advertiser || undefined,
-      deep_search: deepSearch,
-      fetch_details: deepSearch,
+      deep_search: true,
+      fetch_details: true,
       ...override,
     };
     if (!params.keyword && !params.advertiser && !params.page_id) {
@@ -371,10 +370,14 @@ export default function HomePage() {
       const t = localStorage.getItem('mas_tab');
       const jid = localStorage.getItem('mas_bulkJobId');
       const sf = localStorage.getItem('mas_show_filters');
+      const fp = localStorage.getItem('mas_filter_params');
+      const so = localStorage.getItem('mas_sort');
       /* eslint-disable react-hooks/set-state-in-effect */
       if (t === 'search' || t === 'saved' || t === 'bulk') setTab(t);
       if (jid) setBulkJobId(jid);
       if (sf === '0') setShowFilters(false);
+      if (fp) { try { setFilterParams({ ...DEFAULT_PARAMS, ...JSON.parse(fp) }); } catch { /* ignore */ } }
+      if (so) setSortBy(so);
       /* eslint-enable react-hooks/set-state-in-effect */
     } catch { /* ignore */ }
   }, []);
@@ -386,6 +389,14 @@ export default function HomePage() {
   useEffect(() => {
     try { localStorage.setItem('mas_show_filters', showFilters ? '1' : '0'); } catch { /* ignore */ }
   }, [showFilters]);
+
+  useEffect(() => {
+    try { localStorage.setItem('mas_filter_params', JSON.stringify(filterParams)); } catch { /* ignore */ }
+  }, [filterParams]);
+
+  useEffect(() => {
+    try { localStorage.setItem('mas_sort', sortBy); } catch { /* ignore */ }
+  }, [sortBy]);
 
   useEffect(() => {
     try {
@@ -466,9 +477,8 @@ export default function HomePage() {
         {/* Top nav */}
         <header className="border-b border-border/50 px-4 py-3 flex items-center gap-3 shrink-0 bg-card/50 backdrop-blur-sm">
           <div className="flex items-center gap-2 shrink-0">
-            <div className="w-6 h-6 rounded-md bg-primary/20 flex items-center justify-center">
-              <Zap className="w-3.5 h-3.5 text-primary" />
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.svg" alt="Meta Ads" className="h-6 w-auto" />
             <span className="font-bold text-sm tracking-tight">Meta Ads</span>
           </div>
           <Separator orientation="vertical" className="h-5" />
@@ -541,16 +551,6 @@ export default function HomePage() {
                     onSelect={pickAdvertiser}
                     onEnter={() => startScrape()}
                   />
-                  <Button
-                    size="sm"
-                    variant={deepSearch ? 'default' : 'outline'}
-                    onClick={() => setDeepSearch((v) => !v)}
-                    className="h-10 px-3 shrink-0"
-                    title="Deep Search: scrapes full advertiser page sorted by impressions"
-                  >
-                    <Layers className="w-3.5 h-3.5 mr-1.5" />
-                    Deep
-                  </Button>
                   {scraping ? (
                     <Button onClick={stopScrape} variant="destructive" className="px-6 h-10 shrink-0">
                       <Square className="w-3.5 h-3.5 mr-1.5 fill-current" /> Stop
@@ -574,7 +574,7 @@ export default function HomePage() {
                     >
                       <span className="w-2 h-2 rounded-full bg-primary animate-pulse shrink-0" />
                       <span className="text-muted-foreground">
-                        {deepSearch ? 'Deep scraping' : 'Scraping'} — {liveAds.length} ads found
+                        Deep scraping — {liveAds.length} ads found
                       </span>
                     </motion.div>
                   )}

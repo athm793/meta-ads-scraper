@@ -84,6 +84,7 @@ export interface AdScopeFilters {
   fetch_details?: boolean;         // run the "See ad details" fetch per ad
   workers?: number;                // parallel companies scraped at once (1–20)
   match_pages?: boolean;           // resolve each company to its brand page (typeahead) and scrape that page
+  country?: string;                // country used to look up brand pages (typeahead)
 }
 
 export interface SearchParams {
@@ -155,6 +156,8 @@ export interface BulkCompany {
   job_id: string;
   company_name: string;
   website?: string;
+  category?: string;       // expected brand category from the upload (helps disambiguate matches)
+  matched_name?: string;   // the advertiser page actually matched + scraped
   status: BulkCompanyStatus;
   active_ads_count: number;
   inactive_ads_count: number;

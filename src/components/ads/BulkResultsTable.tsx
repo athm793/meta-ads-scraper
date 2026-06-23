@@ -27,7 +27,7 @@ const PER_PAGE = 25;
 
 const JOB_STATUS_META: Record<string, { label: string; className: string }> = {
   queued: { label: 'Queued', className: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/20' },
-  running: { label: 'Running', className: 'bg-blue-500/15 text-blue-400 border-blue-500/20' },
+  running: { label: 'Running', className: 'bg-red-500/15 text-red-400 border-red-500/20' },
   paused: { label: 'Paused', className: 'bg-orange-500/15 text-orange-400 border-orange-500/20' },
   complete: { label: 'Complete', className: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20' },
   cancelled: { label: 'Stopped', className: 'bg-muted text-muted-foreground border-border' },
@@ -37,7 +37,7 @@ const JOB_STATUS_META: Record<string, { label: string; className: string }> = {
 function StatusDot({ status, activeCount }: { status: string; activeCount: number }) {
   if (status === 'scraping') {
     return (
-      <span className="flex items-center gap-1.5 text-xs text-blue-400">
+      <span className="flex items-center gap-1.5 text-xs text-red-400">
         <Loader2 className="w-3 h-3 animate-spin" /> Scraping
       </span>
     );
@@ -176,7 +176,12 @@ export function BulkResultsTable({ job, companies, onCompanyClick, onExport, onE
                   className="border-b border-border/30 last:border-0 hover:bg-muted/30 cursor-pointer transition-colors"
                   onClick={() => onCompanyClick(c)}
                 >
-                  <td className="px-3 py-2.5 pl-4 font-medium">{c.company_name}</td>
+                  <td className="px-3 py-2.5 pl-4 font-medium">
+                    {c.company_name}
+                    {c.matched_name && c.matched_name.toLowerCase() !== c.company_name.toLowerCase() && (
+                      <span className="block text-[11px] font-normal text-muted-foreground">→ {c.matched_name}</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5">
                     <StatusDot status={c.status} activeCount={c.active_ads_count} />
                   </td>

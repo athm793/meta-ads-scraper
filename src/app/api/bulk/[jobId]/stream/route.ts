@@ -10,13 +10,26 @@ import type { Ad, BulkCompany, MediaType, Platform, SearchParams, AdvertiserSugg
 export const dynamic = 'force-dynamic';
 export const maxDuration = 600;
 
-// Pick the advertiser page that best matches a company name: exact (case/space-
-// insensitive) name match first, otherwise the typeahead's top (most relevant) hit.
-function pickBestMatch(matches: AdvertiserSuggestion[], name: string): AdvertiserSuggestion | null {
+// Pick the advertiser page that best matches a company. Scores by: exact name
+// match, then category match (if the upload provided one), then verified badge,
+// then follower count. This avoids blindly taking the first lookalike.
+function pickBestMatch(matches: AdvertiserSuggestion[], name: string, category?: string): AdvertiserSuggestion | null {
   if (matches.length === 0) return null;
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   const target = norm(name);
-  return matches.find((m) => norm(m.name) === target) || matches[0];
+  const cat = norm(category || '');
+  const scored = matches.map((m, i) => {
+    let score = 0;
+    if (norm(m.name) === target) score += 1000;            // exact name
+    else if (norm(m.name).includes(target) || target.includes(norm(m.name))) score += 200;
+    if (cat && norm(m.category || '').includes(cat)) score += 400;  // category match
+    if (m.verified) score += 100;                          // official/verified
+    score += Math.min(50, Math.log10((m.likes || m.ig_followers || 0) + 1) * 5); // popularity
+    score -= i * 0.1;                                       // tiny preference for relevance order
+    return { m, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].m;
 }
 
 const DEFAULT_WORKERS = 10;
@@ -75,9 +88,17 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
             // when no matching page is found.
             if (f.match_pages) {
               let page: AdvertiserSuggestion | null = null;
-              try { page = pickBestMatch(await searchAdvertisers(company.company_name), company.company_name); } catch { /* fall back */ }
+              try {
+                const lookupCountry = f.country && f.country !== 'ALL' ? f.country : 'US';
+                page = pickBestMatch(
+                  await searchAdvertisers(company.company_name, lookupCountry),
+                  company.company_name,
+                  company.category
+                );
+              } catch { /* fall back */ }
               if (page) {
                 scrapeParams.page_id = page.page_id;
+                updateBulkCompany(company.id, { matched_name: page.name });
               } else {
                 scrapeParams.advertiser = company.company_name;
               }

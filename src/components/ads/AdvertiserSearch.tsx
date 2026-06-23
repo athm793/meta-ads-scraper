@@ -82,7 +82,7 @@ export function AdvertiserSearch({ value, onChange, country, onSelect, onEnter }
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate flex items-center gap-1">
                     {s.name}
-                    {s.verified && <BadgeCheck className="w-3.5 h-3.5 text-blue-400 shrink-0" />}
+                    {s.verified && <BadgeCheck className="w-3.5 h-3.5 text-red-400 shrink-0" />}
                   </p>
                   <p className="text-xs text-muted-foreground truncate">
                     {[s.category, (s.likes || s.ig_followers) ? `${compact(s.likes || s.ig_followers)} followers` : ''].filter(Boolean).join(' · ')}

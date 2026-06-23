@@ -157,6 +157,10 @@ function initSchema(db: Database.Database) {
   if (!bulkCols.includes('filters')) {
     db.exec(`ALTER TABLE bulk_jobs ADD COLUMN filters TEXT DEFAULT '{}'`);
   }
+
+  const companyCols = (db.pragma('table_info(bulk_job_companies)') as { name: string }[]).map((c) => c.name);
+  if (!companyCols.includes('category')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN category TEXT`);
+  if (!companyCols.includes('matched_name')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN matched_name TEXT`);
 }
 
 export function upsertAd(ad: Ad) {
@@ -473,7 +477,7 @@ export function getScrapeJobs(): ScrapeJob[] {
 // Bulk jobs
 export function createBulkJob(
   name: string,
-  companies: Array<{ company_name: string; website?: string }>,
+  companies: Array<{ company_name: string; website?: string; category?: string }>,
   filters?: AdScopeFilters
 ): BulkJob {
   const db = getDb();
@@ -483,10 +487,10 @@ export function createBulkJob(
     id, name, created_at, 'queued', companies.length, JSON.stringify(filters ?? {})
   );
   const insertCompany = db.prepare(
-    'INSERT INTO bulk_job_companies (id, job_id, company_name, website, status) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO bulk_job_companies (id, job_id, company_name, website, category, status) VALUES (?, ?, ?, ?, ?, ?)'
   );
   for (const c of companies) {
-    insertCompany.run(crypto.randomUUID(), id, c.company_name, c.website ?? null, 'pending');
+    insertCompany.run(crypto.randomUUID(), id, c.company_name, c.website ?? null, c.category ?? null, 'pending');
   }
   return { id, name, created_at, status: 'queued', total_companies: companies.length, completed_companies: 0, filters: filters ?? {} };
 }
@@ -549,6 +553,7 @@ export function updateBulkCompany(id: string, data: Partial<BulkCompany>) {
       platforms = COALESCE(@platforms, platforms),
       spend_range = COALESCE(@spend_range, spend_range),
       last_ad_date = COALESCE(@last_ad_date, last_ad_date),
+      matched_name = COALESCE(@matched_name, matched_name),
       scraped_at = COALESCE(@scraped_at, scraped_at)
     WHERE id = @id
   `).run({
@@ -560,6 +565,7 @@ export function updateBulkCompany(id: string, data: Partial<BulkCompany>) {
     platforms: data.platforms ? JSON.stringify(data.platforms) : null,
     spend_range: data.spend_range ?? null,
     last_ad_date: data.last_ad_date ?? null,
+    matched_name: data.matched_name ?? null,
     scraped_at: data.scraped_at ?? null,
   });
 }

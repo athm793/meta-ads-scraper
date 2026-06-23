@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import Papa from 'papaparse';
 import type { BulkJob, MediaType, Platform } from '@/types/ads';
 import { formatDistanceToNow } from 'date-fns';
+import { CountryCombobox } from './CountryCombobox';
 
 const MEDIA_OPTS: { value: MediaType; label: string }[] = [
   { value: 'image', label: 'Image' },
@@ -39,7 +40,7 @@ interface BulkUploadProps {
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   complete: { label: 'Complete', color: 'text-emerald-400' },
-  running: { label: 'Running', color: 'text-blue-400' },
+  running: { label: 'Running', color: 'text-red-400' },
   queued: { label: 'Queued', color: 'text-yellow-400' },
   paused: { label: 'Paused', color: 'text-orange-400' },
   cancelled: { label: 'Stopped', color: 'text-muted-foreground' },
@@ -50,7 +51,7 @@ const ACTIVE_STATUSES = new Set(['running', 'queued', 'paused']);
 
 const NO_COLUMN = '__none__';
 
-type CompanyRow = { company_name: string; website?: string };
+type CompanyRow = { company_name: string; website?: string; category?: string };
 
 // Case-insensitive dedup by company name; returns kept rows + how many dropped.
 function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: number } {
@@ -63,7 +64,7 @@ function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: 
     const key = name.toLowerCase();
     if (seen.has(key)) { dupes++; continue; }
     seen.add(key);
-    companies.push({ company_name: name, website: c.website?.trim() || undefined });
+    companies.push({ company_name: name, website: c.website?.trim() || undefined, category: c.category?.trim() || undefined });
   }
   return { companies, dupes };
 }
@@ -78,7 +79,7 @@ function guessColumn(fields: string[], patterns: RegExp): string | null {
 
 function JobStatusIcon({ status }: { status: string }) {
   if (status === 'complete') return <CheckCircle2 className="w-3 h-3 text-emerald-400" />;
-  if (status === 'running') return <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />;
+  if (status === 'running') return <Loader2 className="w-3 h-3 text-red-400 animate-spin" />;
   if (status === 'paused') return <Pause className="w-3 h-3 text-orange-400" />;
   return <Clock className="w-3 h-3" />;
 }
@@ -167,6 +168,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [columns, setColumns] = useState<string[]>([]);
   const [companyCol, setCompanyCol] = useState('');
   const [websiteCol, setWebsiteCol] = useState(NO_COLUMN);
+  const [categoryCol, setCategoryCol] = useState(NO_COLUMN);
   const [loading, setLoading] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [scopeStatus, setScopeStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
@@ -174,6 +176,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [scopePlatforms, setScopePlatforms] = useState<Platform[]>([]);
   const [fetchDetails, setFetchDetails] = useState(false);
   const [matchPages, setMatchPages] = useState(true);
+  const [matchCountry, setMatchCountry] = useState('US');
   const [workers, setWorkers] = useState(10);
 
   // Restore the last-used worker count so it persists between runs/startups
@@ -254,12 +257,13 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
       const mapped = rawRows.map((row) => ({
         company_name: companyCol ? (row[companyCol] ?? '') : '',
         website: websiteCol !== NO_COLUMN ? (row[websiteCol] ?? '') : undefined,
+        category: categoryCol !== NO_COLUMN ? (row[categoryCol] ?? '') : undefined,
       }));
       return dedupeCompanies(mapped);
     }
     const lines = textInput.split('\n').map((l) => ({ company_name: l }));
     return dedupeCompanies(lines);
-  }, [fileName, rawRows, companyCol, websiteCol, textInput]);
+  }, [fileName, rawRows, companyCol, websiteCol, categoryCol, textInput]);
 
   function handleTextChange(val: string) {
     setTextInput(val);
@@ -275,6 +279,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     setColumns([]);
     setCompanyCol('');
     setWebsiteCol(NO_COLUMN);
+    setCategoryCol(NO_COLUMN);
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -295,10 +300,15 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
           guessColumn(fields, /^(website|domain|url|site|web)$/i) ||
           guessColumn(fields, /(website|domain|url)/i) ||
           NO_COLUMN;
+        const guessedCategory =
+          guessColumn(fields, /^(category|industry|type|sector|vertical)$/i) ||
+          guessColumn(fields, /(category|industry|sector|vertical)/i) ||
+          NO_COLUMN;
         setRawRows(results.data);
         setColumns(fields);
         setCompanyCol(guessedCompany);
         setWebsiteCol(guessedWebsite);
+        setCategoryCol(guessedCategory);
         setFileName(file.name);
         setTextInput('');
       },
@@ -321,6 +331,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
             platforms: scopePlatforms,
             fetch_details: fetchDetails,
             match_pages: matchPages,
+            country: matchCountry,
             workers,
           },
         }),
@@ -435,6 +446,18 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                         </SelectContent>
                       </Select>
                     </div>
+                    <div className="space-y-1 col-span-2">
+                      <Label className="text-[11px] text-muted-foreground">Category / type (optional — improves brand match)</Label>
+                      <Select value={categoryCol} onValueChange={(v) => v && setCategoryCol(v)}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
+                          {columns.map((col) => (
+                            <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 </div>
               )}
@@ -499,6 +522,17 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                 : 'Keyword search of the name across all advertisers (may include lookalikes).'}
             </p>
           </div>
+
+          {/* Brand-lookup country — disambiguates same-name brands by market */}
+          {matchPages && (
+            <div className="space-y-1.5">
+              <Label className="text-[11px] text-muted-foreground">Look up brands in</Label>
+              <CountryCombobox value={matchCountry} onChange={setMatchCountry} placeholder="United States" />
+              <p className="text-[11px] text-muted-foreground/70">
+                Picks the right brand by market. Add a <span className="font-medium">category</span> column to your CSV to disambiguate further.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="text-[11px] text-muted-foreground">Status</Label>
@@ -611,13 +645,13 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
         >
           <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-60" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-400" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-60" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-400" />
             </span>
             Active Jobs
             <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">{activeJobs.length}</Badge>
           </div>
-          <div className="rounded-lg border border-blue-500/20 bg-blue-500/[0.03] divide-y divide-border/30 overflow-hidden">
+          <div className="rounded-lg border border-red-500/20 bg-red-500/[0.03] divide-y divide-border/30 overflow-hidden">
             {activeJobs.map((job) => (
               <JobRow
                 key={job.id}
