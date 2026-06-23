@@ -361,9 +361,11 @@ export default function HomePage() {
     try {
       const t = localStorage.getItem('mas_tab');
       const jid = localStorage.getItem('mas_bulkJobId');
+      const sf = localStorage.getItem('mas_show_filters');
       /* eslint-disable react-hooks/set-state-in-effect */
       if (t === 'search' || t === 'saved' || t === 'bulk') setTab(t);
       if (jid) setBulkJobId(jid);
+      if (sf === '0') setShowFilters(false);
       /* eslint-enable react-hooks/set-state-in-effect */
     } catch { /* ignore */ }
   }, []);
@@ -371,6 +373,10 @@ export default function HomePage() {
   useEffect(() => {
     try { localStorage.setItem('mas_tab', tab); } catch { /* ignore */ }
   }, [tab]);
+
+  useEffect(() => {
+    try { localStorage.setItem('mas_show_filters', showFilters ? '1' : '0'); } catch { /* ignore */ }
+  }, [showFilters]);
 
   useEffect(() => {
     try {
@@ -423,6 +429,7 @@ export default function HomePage() {
                 params={filterParams}
                 onChange={(p) => setFilterParams((prev) => ({ ...prev, ...p }))}
                 onReset={() => setFilterParams(DEFAULT_PARAMS)}
+                onClose={() => setShowFilters(false)}
                 collections={collections}
                 activeCollection={activeCollection}
                 onCollectionChange={setActiveCollection}
@@ -465,8 +472,8 @@ export default function HomePage() {
                 <Button size="sm" variant="outline" onClick={() => setCollectionsOpen(true)} className="h-8 text-xs">
                   <FolderPlus className="w-3 h-3 mr-1" />Collections
                 </Button>
-                <Button size="sm" variant="outline" onClick={() => setShowFilters((v) => !v)} className="h-8 text-xs">
-                  <SlidersHorizontal className="w-3 h-3 mr-1" />{showFilters ? 'Hide' : 'Filters'}
+                <Button size="sm" variant={showFilters ? 'outline' : 'default'} onClick={() => setShowFilters((v) => !v)} className="h-8 text-xs" title={showFilters ? 'Hide filters' : 'Show filters'}>
+                  <SlidersHorizontal className="w-3 h-3 mr-1" />{showFilters ? 'Hide filters' : 'Filters'}
                 </Button>
                 {filteredAds.length > 0 && (
                   <>

@@ -15,7 +15,10 @@ import {
   Layers,
   Video,
   ImageIcon,
+  ImageDown,
+  Loader2,
 } from 'lucide-react';
+import { downloadAdMedia, adMediaUrls } from '@/lib/downloadMedia';
 
 const PLATFORM_LABELS: Record<string, string> = {
   FACEBOOK: 'FB',
@@ -104,8 +107,10 @@ function MediaPreview({ ad }: { ad: Ad }) {
 
 export function AdCard({ ad, index = 0, onClick, onSave }: AdCardProps) {
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const body = ad.body_variants[0] || '';
   const truncatedBody = body.length > 100 ? body.slice(0, 100) + '…' : body;
+  const mediaCount = adMediaUrls(ad).length;
 
   async function handleSave(e: React.MouseEvent) {
     e.stopPropagation();
@@ -114,6 +119,16 @@ export function AdCard({ ad, index = 0, onClick, onSave }: AdCardProps) {
       await onSave(ad.id, !ad.saved);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDownload(e: React.MouseEvent) {
+    e.stopPropagation();
+    setDownloading(true);
+    try {
+      await downloadAdMedia(ad);
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -172,6 +187,18 @@ export function AdCard({ ad, index = 0, onClick, onSave }: AdCardProps) {
             ))}
           </div>
           <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            {mediaCount > 0 && (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6"
+                onClick={handleDownload}
+                disabled={downloading}
+                title={`Download media (${mediaCount} file${mediaCount > 1 ? 's' : ''})`}
+              >
+                {downloading ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImageDown className="w-3 h-3" />}
+              </Button>
+            )}
             {ad.ad_snapshot_url && (
               <Button
                 size="icon"

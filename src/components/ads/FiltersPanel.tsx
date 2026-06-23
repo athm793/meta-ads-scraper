@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { SearchParams, Collection } from '@/types/ads';
-import { RotateCcw, Check, ChevronsUpDown, FolderOpen } from 'lucide-react';
+import { RotateCcw, Check, ChevronsUpDown, FolderOpen, PanelLeftClose } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const COUNTRIES: { code: string; name: string }[] = [
@@ -111,6 +111,7 @@ interface FiltersPanelProps {
   params: SearchParams;
   onChange: (p: Partial<SearchParams>) => void;
   onReset: () => void;
+  onClose?: () => void;
   collections: Collection[];
   activeCollection: string | null;
   onCollectionChange: (id: string | null) => void;
@@ -297,7 +298,7 @@ const LIMIT_OPTS = [
   { value: '500', label: '500' },
 ];
 
-export function FiltersPanel({ params, onChange, onReset, collections, activeCollection, onCollectionChange }: FiltersPanelProps) {
+export function FiltersPanel({ params, onChange, onReset, onClose, collections, activeCollection, onCollectionChange }: FiltersPanelProps) {
   const activeCount = [
     params.language,
     params.category && params.category !== 'ALL',
@@ -320,13 +321,24 @@ export function FiltersPanel({ params, onChange, onReset, collections, activeCol
             </span>
           )}
         </div>
-        <button
-          onClick={onReset}
-          disabled={activeCount === 0}
-          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:pointer-events-none"
-        >
-          <RotateCcw className="w-3 h-3" /> Reset
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onReset}
+            disabled={activeCount === 0}
+            className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <RotateCcw className="w-3 h-3" /> Reset
+          </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              title="Hide filters"
+              className="ml-1 p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <PanelLeftClose className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="p-4 space-y-5">

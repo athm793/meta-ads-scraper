@@ -55,13 +55,13 @@ export function CollectionsPanel({ open, onClose, collections, tags, onCreate, o
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-96 flex flex-col">
-        <SheetHeader>
+      <SheetContent side="right" className="w-[440px] data-[side=right]:sm:max-w-md flex flex-col">
+        <SheetHeader className="px-5 pt-5 pb-2">
           <SheetTitle>Lists &amp; Tags</SheetTitle>
         </SheetHeader>
 
-        <ScrollArea className="flex-1 -mr-4 pr-4 mt-4">
-          <div className="space-y-7 pb-6">
+        <ScrollArea className="flex-1 min-h-0">
+          <div className="px-5 pb-6 space-y-7">
             {/* Collections / Lists */}
             <section className="space-y-3">
               <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">

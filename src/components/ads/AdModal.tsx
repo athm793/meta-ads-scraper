@@ -4,15 +4,15 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Ad } from '@/types/ads';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
-import { Download, ExternalLink, Copy, ChevronLeft, ChevronRight, MapPin, Users, Target } from 'lucide-react';
+import { Download, ExternalLink, Copy, ChevronLeft, ChevronRight, MapPin, Users, Target, ImageDown, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
 import { TagEditor } from './TagEditor';
 import { adsToCsv, exportFilename } from '@/lib/exportCsv';
+import { downloadAdMedia, adMediaUrls } from '@/lib/downloadMedia';
 
 interface AdModalProps {
   ad: Ad | null;
@@ -31,8 +31,16 @@ function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 export function AdModal({ ad, open, onClose }: AdModalProps) {
   const [carouselIdx, setCarouselIdx] = useState(0);
+  const [dlMedia, setDlMedia] = useState(false);
 
   if (!ad) return null;
+
+  const mediaCount = adMediaUrls(ad).length;
+  async function handleDownloadMedia() {
+    if (!ad) return;
+    setDlMedia(true);
+    try { await downloadAdMedia(ad); } finally { setDlMedia(false); }
+  }
 
   const hasDemo = ad.demographic_distribution.length > 0 || ad.region_distribution.length > 0;
   const hasTargeting = ad.deep_search_done && (
@@ -65,7 +73,7 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="w-[calc(100vw-1.5rem)] max-w-5xl max-h-[90vh] p-0 overflow-hidden">
+      <DialogContent className="w-[calc(100vw-1.5rem)] sm:max-w-4xl max-h-[88vh] p-0 overflow-hidden flex flex-col">
         <DialogHeader className="px-5 sm:px-6 pt-5 sm:pt-6 pb-0">
           <div className="flex items-center justify-between gap-3 pr-8">
             <DialogTitle className="text-base font-semibold truncate min-w-0">{ad.advertiser_name}</DialogTitle>
@@ -81,7 +89,13 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                   <><span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block mr-1 animate-pulse" />Active</>
                 ) : 'Inactive'}
               </Badge>
-              <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => exportAd('csv')} title="Export this ad as CSV">
+              {mediaCount > 0 && (
+                <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={handleDownloadMedia} disabled={dlMedia} title={`Download media (${mediaCount} file${mediaCount > 1 ? 's' : ''})`}>
+                  {dlMedia ? <Loader2 className="w-3 h-3 sm:mr-1 animate-spin" /> : <ImageDown className="w-3 h-3 sm:mr-1" />}
+                  <span className="hidden sm:inline">Media{mediaCount > 1 ? ` (${mediaCount})` : ''}</span>
+                </Button>
+              )}
+              <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => exportAd('csv')} title="Export this ad's data as CSV">
                 <Download className="w-3 h-3 sm:mr-1" /> <span className="hidden sm:inline">Export</span>
               </Button>
               {ad.ad_snapshot_url && (
@@ -97,7 +111,7 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
           <TagEditor adId={ad.id} />
         </div>
 
-        <Tabs defaultValue="creative" className="flex-1 overflow-hidden">
+        <Tabs defaultValue="creative" className="flex flex-col min-h-0">
           <TabsList className="mx-6 mt-4 h-8">
             <TabsTrigger value="creative" className="text-xs">Creative</TabsTrigger>
             <TabsTrigger value="copy" className="text-xs">Copy</TabsTrigger>
@@ -106,7 +120,7 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
             {hasTargeting && <TabsTrigger value="targeting" className="text-xs">Targeting</TabsTrigger>}
           </TabsList>
 
-          <ScrollArea className="h-[calc(90vh-230px)]">
+          <div className="overflow-y-auto max-h-[68vh]">
             {/* Creative */}
             <TabsContent value="creative" className="p-6 mt-0">
               {ad.media_type === 'carousel' && ad.carousel_cards.length > 0 ? (
@@ -445,7 +459,7 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                 )}
               </TabsContent>
             )}
-          </ScrollArea>
+          </div>
         </Tabs>
       </DialogContent>
     </Dialog>
