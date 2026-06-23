@@ -35,12 +35,23 @@ interface AdCardProps {
 }
 
 function MediaPreview({ ad }: { ad: Ad }) {
-  const [imgIdx, setImgIdx] = useState(0);
-  const imgs = ad.media_urls;
-  const isVideo = ad.media_type === 'video' || ad.media_type === 'multi_video';
-  const isCarousel = ad.media_type === 'carousel';
+  const [idx, setIdx] = useState(0);
 
-  if (!imgs.length) {
+  // Prefer still images. But many ads — especially video carousels — have an
+  // empty media_urls and only carry video URLs (top-level or per card). For
+  // those we fall back to the video frames so the preview isn't a blank
+  // placeholder when the creative is actually right there.
+  const slides: Array<{ url: string; kind: 'image' | 'video' }> = ad.media_urls.length
+    ? ad.media_urls.map((url) => ({ url, kind: 'image' as const }))
+    : adMediaUrls(ad);
+
+  const isCarousel = ad.media_type === 'carousel';
+  const hasVideo =
+    ad.media_type === 'video' ||
+    ad.media_type === 'multi_video' ||
+    slides.some((s) => s.kind === 'video');
+
+  if (!slides.length) {
     return (
       <div className="w-full aspect-video bg-muted/40 flex items-center justify-center">
         <ImageIcon className="w-8 h-8 text-muted-foreground/30" />
@@ -48,18 +59,34 @@ function MediaPreview({ ad }: { ad: Ad }) {
     );
   }
 
+  const safeIdx = Math.min(idx, slides.length - 1);
+  const cur = slides[safeIdx];
+
   return (
     <div className="relative w-full aspect-video bg-black/60 overflow-hidden group/media">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={mediaSrc(imgs[imgIdx])}
-        alt=""
-        className="w-full h-full object-cover transition-transform duration-300 group-hover/media:scale-[1.02]"
-        loading="lazy"
-        onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0'; }}
-      />
+      {cur.kind === 'video' ? (
+        <video
+          // #t=0.1 nudges the element to render the first frame as a poster
+          // (the fragment stays client-side; it isn't sent to the proxy).
+          src={mediaSrc(cur.url) + '#t=0.1'}
+          className="w-full h-full object-cover transition-transform duration-300 group-hover/media:scale-[1.02]"
+          preload="metadata"
+          muted
+          playsInline
+          onError={(e) => { (e.target as HTMLVideoElement).style.opacity = '0'; }}
+        />
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={mediaSrc(cur.url)}
+          alt=""
+          className="w-full h-full object-cover transition-transform duration-300 group-hover/media:scale-[1.02]"
+          loading="lazy"
+          onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0'; }}
+        />
+      )}
 
-      {isVideo && (
+      {cur.kind === 'video' && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="bg-black/50 rounded-full p-3 backdrop-blur-sm">
             <Play className="w-6 h-6 text-white fill-white" />
@@ -70,33 +97,33 @@ function MediaPreview({ ad }: { ad: Ad }) {
       <div className="absolute top-2 left-2 flex gap-1">
         {isCarousel && (
           <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-xs backdrop-blur-sm">
-            <Layers className="w-3 h-3" /> {imgs.length}
+            <Layers className="w-3 h-3" /> {slides.length}
           </span>
         )}
-        {isVideo && (
+        {hasVideo && (
           <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-xs backdrop-blur-sm">
             <Video className="w-3 h-3" />
           </span>
         )}
       </div>
 
-      {isCarousel && imgs.length > 1 && (
+      {slides.length > 1 && (
         <>
           <button
-            onClick={(e) => { e.stopPropagation(); setImgIdx((i) => Math.max(0, i - 1)); }}
+            onClick={(e) => { e.stopPropagation(); setIdx((i) => Math.max(0, Math.min(i, slides.length - 1) - 1)); }}
             className="absolute left-1 top-1/2 -translate-y-1/2 bg-black/60 rounded-full p-0.5 text-white opacity-0 group-hover/media:opacity-100 transition-opacity"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); setImgIdx((i) => Math.min(imgs.length - 1, i + 1)); }}
+            onClick={(e) => { e.stopPropagation(); setIdx((i) => Math.min(slides.length - 1, i + 1)); }}
             className="absolute right-1 top-1/2 -translate-y-1/2 bg-black/60 rounded-full p-0.5 text-white opacity-0 group-hover/media:opacity-100 transition-opacity"
           >
             <ChevronRight className="w-4 h-4" />
           </button>
           <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 flex gap-1">
-            {imgs.map((_, i) => (
-              <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === imgIdx ? 'bg-white' : 'bg-white/40'}`} />
+            {slides.map((_, i) => (
+              <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === safeIdx ? 'bg-white' : 'bg-white/40'}`} />
             ))}
           </div>
         </>

@@ -163,8 +163,18 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                         alt={`Slide ${carouselIdx + 1}`}
                         className="w-full h-full object-contain"
                       />
+                    ) : ad.carousel_cards[carouselIdx]?.video_url ? (
+                      // Video carousels carry a video_url per card and no still image.
+                      <video
+                        key={carouselIdx}
+                        src={mediaSrc(ad.carousel_cards[carouselIdx].video_url)}
+                        poster={mediaSrc(ad.carousel_cards[carouselIdx].image_url)}
+                        controls
+                        playsInline
+                        className="w-full h-full object-contain bg-black"
+                      />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">No image</div>
+                      <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">No media</div>
                     )}
                     {ad.carousel_cards.length > 1 && (
                       <>
