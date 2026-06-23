@@ -104,9 +104,26 @@ export function AdvertiserSearch({ value, onChange, country, onSelect, onEnter }
                     {s.name}
                     {s.verified && <BadgeCheck className="w-3.5 h-3.5 text-red-400 shrink-0" />}
                   </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {[s.category, (s.likes || s.ig_followers) ? `${compact(s.likes || s.ig_followers)} followers` : ''].filter(Boolean).join(' · ')}
-                  </p>
+                  {(s.page_alias || s.ig_username) ? (
+                    <div className="flex flex-col gap-0.5 mt-0.5">
+                      {s.page_alias && (
+                        <p className="text-xs text-muted-foreground truncate flex items-center gap-1.5">
+                          <span className="text-[9px] font-semibold text-muted-foreground/60 shrink-0 w-4">FB</span>
+                          <span className="truncate">{[`@${s.page_alias}`, s.likes ? `${compact(s.likes)} followers` : '', s.category].filter(Boolean).join(' · ')}</span>
+                        </p>
+                      )}
+                      {s.ig_username && (
+                        <p className="text-xs text-muted-foreground truncate flex items-center gap-1.5">
+                          <span className="text-[9px] font-semibold text-muted-foreground/60 shrink-0 w-4">IG</span>
+                          <span className="truncate">{[`@${s.ig_username}`, s.ig_followers ? `${compact(s.ig_followers)} followers` : ''].filter(Boolean).join(' · ')}</span>
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground truncate">
+                      {[s.category, (s.likes || s.ig_followers) ? `${compact(s.likes || s.ig_followers)} followers` : ''].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
                 </div>
               </button>
             ))}

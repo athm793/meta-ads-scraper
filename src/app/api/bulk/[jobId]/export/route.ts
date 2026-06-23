@@ -5,14 +5,22 @@ import { companyResultsUrl } from '@/lib/adLibraryUrl';
 import type { BulkCompany } from '@/types/ads';
 
 const HEADER = [
-  'Company Name', 'Matched Page', 'Ad Library URL', 'Status', 'Active Ads', 'Inactive Ads', 'Total Ads',
+  'Company Name', 'Matched Page', 'Facebook Username', 'Instagram Username', 'Match Method',
+  'Ad Library URL', 'Status', 'Active Ads', 'Inactive Ads', 'Total Ads',
   'Ad Types', 'Platforms', 'Spend Range', 'Last Ad Date', 'Scraped At',
 ].map((h) => `"${h}"`).join(',');
+
+const MATCH_LABEL: Record<string, string> = {
+  page_id: 'Page URL/ID', handle_fb: 'FB handle', handle_ig: 'IG handle', keyword: 'Keyword',
+};
 
 function toRow(c: BulkCompany): string {
   const fields = [
     c.company_name,
     c.matched_name || (c.matched_page_id ? '' : 'keyword search'),
+    c.fb_handle || '',
+    c.ig_handle || '',
+    c.match_method ? (MATCH_LABEL[c.match_method] ?? c.match_method) : (c.status === 'unverified' ? 'Unverified' : ''),
     companyResultsUrl({ matched_page_id: c.matched_page_id, company_name: c.company_name }),
     c.status,
     String(c.active_ads_count),
@@ -32,9 +40,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ jobId: s
   const type = new URL(req.url).searchParams.get('type');
   const jobName = getBulkJob(jobId)?.name;
 
-  // type=ads → full per-ad export (incl. "See ad details" / EU transparency)
+  // type=ads → full per-ad export (incl. "See ad details" / EU transparency),
+  // augmented with each ad's brand handles (joined via company id).
   if (type === 'ads') {
-    const csv = adsToCsv(getAdsByBulkJob(jobId));
+    const handleByCompany = new Map(
+      getBulkJobCompanies(jobId).map((c) => [c.id, { fb: c.fb_handle || '', ig: c.ig_handle || '' }])
+    );
+    const csv = adsToCsv(getAdsByBulkJob(jobId), {
+      headers: ['Facebook Username', 'Instagram Username'],
+      row: (ad) => {
+        const h = ad.scrape_job_id ? handleByCompany.get(ad.scrape_job_id) : undefined;
+        return [h?.fb || '', h?.ig || ''];
+      },
+    });
     return new NextResponse(csv, {
       headers: {
         'Content-Type': 'text/csv; charset=utf-8',

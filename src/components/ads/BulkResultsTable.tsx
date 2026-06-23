@@ -51,6 +51,10 @@ function StatusDot({ status, activeCount, jobLive }: { status: string; activeCou
   if (status === 'pending') {
     return <span className="text-xs text-muted-foreground/60">Pending</span>;
   }
+  if (status === 'unverified') {
+    // Couldn't deterministically match the brand's page — skipped, not scraped.
+    return <span className="flex items-center gap-1.5 text-xs text-amber-400"><span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />Needs review</span>;
+  }
   if (status === 'error') {
     return <span className="flex items-center gap-1.5 text-xs text-red-400"><span className="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0" />Error</span>;
   }
@@ -146,12 +150,13 @@ export function BulkResultsTable({ job, companies, onCompanyClick, onExport, onE
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-          className="grid grid-cols-3 gap-3"
+          className="grid grid-cols-2 sm:grid-cols-4 gap-3"
         >
           {[
             { label: 'Active Advertisers', value: companies.filter((c) => c.active_ads_count > 0).length, color: 'text-emerald-400' },
             { label: 'Stopped Running', value: companies.filter((c) => c.status === 'done' && c.active_ads_count === 0 && c.inactive_ads_count > 0).length, color: 'text-yellow-400' },
             { label: 'No Ads Found', value: companies.filter((c) => c.status === 'not_found' || (c.status === 'done' && c.active_ads_count === 0 && c.inactive_ads_count === 0)).length, color: 'text-muted-foreground' },
+            { label: 'Needs Review', value: companies.filter((c) => c.status === 'unverified').length, color: 'text-amber-400' },
           ].map((s) => (
             <div key={s.label} className="border border-border/50 rounded-lg p-3 text-center bg-card/30">
               <p className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
@@ -186,6 +191,14 @@ export function BulkResultsTable({ job, companies, onCompanyClick, onExport, onE
                     {c.company_name}
                     {c.matched_name && c.matched_name.toLowerCase() !== c.company_name.toLowerCase() && (
                       <span className="block text-[11px] font-normal text-muted-foreground">→ {c.matched_name}</span>
+                    )}
+                    {(c.match_method?.startsWith('handle') || c.match_method === 'page_id') && (
+                      <span
+                        className={`inline-flex items-center gap-1 mt-1 text-[10px] px-1.5 py-0 h-4 rounded font-normal ${c.match_method === 'page_id' ? 'bg-primary/15 text-primary' : 'bg-emerald-500/15 text-emerald-400'}`}
+                        title={c.match_method === 'handle_fb' ? `Verified via Facebook handle @${c.fb_handle}` : c.match_method === 'handle_ig' ? `Verified via Instagram handle @${c.ig_handle}` : 'Exact page URL/ID provided'}
+                      >
+                        {c.match_method === 'page_id' ? 'Exact page' : <>✓ @{(c.match_method === 'handle_ig' ? c.ig_handle : c.fb_handle) || 'handle'}</>}
+                      </span>
                     )}
                   </td>
                   <td className="px-3 py-2.5">

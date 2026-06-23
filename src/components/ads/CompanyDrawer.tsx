@@ -57,6 +57,13 @@ export function CompanyDrawer({ company, open, onClose, onAdClick }: CompanyDraw
                 : 'Open keyword search on Meta'}
             </a>
           )}
+          {company && (company.match_method?.startsWith('handle') || company.match_method === 'page_id') && (
+            <Badge variant="outline" className="text-[11px] w-fit mt-1 border-emerald-500/30 text-emerald-400 bg-emerald-500/10">
+              {company.match_method === 'handle_fb' ? `Verified · @${company.fb_handle}`
+                : company.match_method === 'handle_ig' ? `Verified · @${company.ig_handle}`
+                : 'Exact page (URL/ID)'}
+            </Badge>
+          )}
           {company && (
             <div className="flex gap-2 flex-wrap mt-1">
               <Badge variant="secondary" className="text-xs">

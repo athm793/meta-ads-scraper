@@ -65,8 +65,25 @@ export function adToCsvRow(ad: Ad): string {
   return fields.map((f) => `"${String(f).replace(/"/g, '""')}"`).join(',');
 }
 
-export function adsToCsv(ads: Ad[]): string {
-  return BOM + [AD_CSV_HEADER, ...ads.map(adToCsvRow)].join('\n');
+// Lets a caller append extra columns per ad (e.g. the brand's social handles
+// in a bulk export) without bloating the Ad model or the shared header.
+export interface ExtraColumns {
+  headers: string[];
+  row: (ad: Ad) => string[];
+}
+
+function csvCell(f: unknown): string {
+  return `"${String(f ?? '').replace(/"/g, '""')}"`;
+}
+
+export function adsToCsv(ads: Ad[], extra?: ExtraColumns): string {
+  const header = extra
+    ? AD_CSV_HEADER + ',' + extra.headers.map(csvCell).join(',')
+    : AD_CSV_HEADER;
+  const rows = ads.map((ad) =>
+    extra ? adToCsvRow(ad) + ',' + extra.row(ad).map(csvCell).join(',') : adToCsvRow(ad)
+  );
+  return BOM + [header, ...rows].join('\n');
 }
 
 // Builds a safe, identifying download filename: <base>_<label>_<YYYY-MM-DD_HHmm>.csv

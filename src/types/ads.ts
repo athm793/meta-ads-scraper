@@ -4,7 +4,10 @@ export type AdCategory = 'ALL' | 'POLITICAL' | 'HOUSING' | 'EMPLOYMENT' | 'CREDI
 export type Platform = 'FACEBOOK' | 'INSTAGRAM' | 'AUDIENCE_NETWORK' | 'MESSENGER';
 export type ScrapeJobStatus = 'running' | 'complete' | 'error';
 export type BulkJobStatus = 'queued' | 'running' | 'complete' | 'error' | 'paused' | 'cancelled';
-export type BulkCompanyStatus = 'pending' | 'scraping' | 'done' | 'not_found' | 'error';
+export type BulkCompanyStatus = 'pending' | 'scraping' | 'done' | 'not_found' | 'error' | 'unverified';
+
+// How a company was resolved to a Meta page (or not).
+export type BulkMatchMethod = 'page_id' | 'handle_fb' | 'handle_ig' | 'keyword';
 
 export interface CarouselCard {
   title?: string;
@@ -138,7 +141,8 @@ export interface AdvertiserSuggestion {
   likes?: number;
   ig_followers?: number;
   verified?: boolean;
-  page_alias?: string;
+  page_alias?: string;     // Facebook page handle, e.g. "snitch.co.in"
+  ig_username?: string;    // Instagram handle, e.g. "snitch.in" (when Meta returns it)
 }
 
 export interface BulkJob {
@@ -159,6 +163,9 @@ export interface BulkCompany {
   category?: string;       // expected brand category from the upload (helps disambiguate matches)
   matched_name?: string;   // the advertiser page actually matched + scraped
   matched_page_id?: string; // resolved Meta page id (from a user-supplied URL/ID or typeahead match)
+  fb_handle?: string;      // Facebook handle found on the company's website
+  ig_handle?: string;      // Instagram handle found on the company's website
+  match_method?: BulkMatchMethod | null; // how the page was resolved (null = unverified)
   status: BulkCompanyStatus;
   active_ads_count: number;
   inactive_ads_count: number;

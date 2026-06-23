@@ -4,7 +4,6 @@ import { useState, useRef, useMemo, useEffect, Fragment } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -56,7 +55,7 @@ const ACTIVE_STATUSES = new Set(['running', 'queued', 'paused']);
 
 const NO_COLUMN = '__none__';
 
-type CompanyRow = { company_name: string; category?: string; page_id?: string };
+type CompanyRow = { company_name: string; website?: string; category?: string; page_id?: string };
 
 // Case-insensitive dedup by company name; returns kept rows + how many dropped.
 function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: number } {
@@ -71,6 +70,7 @@ function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: 
     seen.add(key);
     companies.push({
       company_name: name,
+      website: c.website?.trim() || undefined,
       category: c.category?.trim() || undefined,
       page_id: c.page_id || undefined,
     });
@@ -272,11 +272,11 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [step, setStep] = useState(1);
   const [maxReached, setMaxReached] = useState(1);
   const [jobName, setJobName] = useState('');
-  const [textInput, setTextInput] = useState('');
   const [fileName, setFileName] = useState<string | null>(null);
   const [rawRows, setRawRows] = useState<Record<string, string>[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [companyCol, setCompanyCol] = useState('');
+  const [websiteCol, setWebsiteCol] = useState(NO_COLUMN);
   const [categoryCol, setCategoryCol] = useState(NO_COLUMN);
   const [pageCol, setPageCol] = useState(NO_COLUMN);
   const [loading, setLoading] = useState(false);
@@ -366,34 +366,28 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     if (action === 'resume') onStart(id);
   }
 
-  // Single source of truth: companies are derived (and deduped) from either the
-  // pasted text or the uploaded CSV + the chosen column mapping.
+  // Companies are derived (and deduped) from the uploaded CSV + column mapping.
   const { companies, dupes } = useMemo(() => {
-    if (fileName) {
-      const mapped = rawRows.map((row) => ({
-        company_name: companyCol ? (row[companyCol] ?? '') : '',
-        category: categoryCol !== NO_COLUMN ? (row[categoryCol] ?? '') : undefined,
-        page_id: pageCol !== NO_COLUMN ? (extractPageId(row[pageCol] ?? '') ?? undefined) : undefined,
-      }));
-      return dedupeCompanies(mapped);
-    }
-    const lines = textInput.split('\n').map((l) => ({ company_name: l }));
-    return dedupeCompanies(lines);
-  }, [fileName, rawRows, companyCol, categoryCol, pageCol, textInput]);
+    if (!fileName) return { companies: [], dupes: 0 };
+    const mapped = rawRows.map((row) => ({
+      company_name: companyCol ? (row[companyCol] ?? '') : '',
+      website: websiteCol !== NO_COLUMN ? (row[websiteCol] ?? '') : undefined,
+      category: categoryCol !== NO_COLUMN ? (row[categoryCol] ?? '') : undefined,
+      page_id: pageCol !== NO_COLUMN ? (extractPageId(row[pageCol] ?? '') ?? undefined) : undefined,
+    }));
+    return dedupeCompanies(mapped);
+  }, [fileName, rawRows, companyCol, websiteCol, categoryCol, pageCol]);
 
-  function handleTextChange(val: string) {
-    setTextInput(val);
-    setFileName(null);
-    setRawRows([]);
-    setColumns([]);
-  }
+  // Brand-page matching needs a website column to do deterministic handle matching.
+  const websiteMapped = websiteCol !== NO_COLUMN;
+  const needsWebsite = matchPages;
 
   function clearList() {
-    setTextInput('');
     setFileName(null);
     setRawRows([]);
     setColumns([]);
     setCompanyCol('');
+    setWebsiteCol(NO_COLUMN);
     setCategoryCol(NO_COLUMN);
     setPageCol(NO_COLUMN);
     if (fileRef.current) fileRef.current.value = '';
@@ -412,6 +406,10 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
           guessColumn(fields, /^(company[\s_-]?name|company|name|account|business|organization)$/i) ||
           guessColumn(fields, /(company|name|account|business)/i) ||
           fields[0] || '';
+        const guessedWebsite =
+          guessColumn(fields, /^(website|domain|url|site|web|homepage)$/i) ||
+          guessColumn(fields, /(website|domain|homepage|\burl\b)/i) ||
+          NO_COLUMN;
         const guessedCategory =
           guessColumn(fields, /^(category|industry|type|sector|vertical)$/i) ||
           guessColumn(fields, /(category|industry|sector|vertical)/i) ||
@@ -423,10 +421,10 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
         setRawRows(results.data);
         setColumns(fields);
         setCompanyCol(guessedCompany);
+        setWebsiteCol(guessedWebsite);
         setCategoryCol(guessedCategory);
         setPageCol(guessedPage);
         setFileName(file.name);
-        setTextInput('');
       },
     });
   }
@@ -509,35 +507,73 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                 className="space-y-4"
               >
                 <div className="space-y-1">
-                  <h3 className="text-sm font-semibold">Add your companies</h3>
+                  <h3 className="text-sm font-semibold">Upload your companies</h3>
                   <p className="text-xs text-muted-foreground">
-                    Paste one company per line, or upload a CSV. Duplicates are removed automatically.
+                    Upload a CSV of companies with their website domains. Duplicates are removed automatically.
                   </p>
                 </div>
 
-                {/* Name-hygiene guide — cleaner names match the right brand page */}
-                <div className="rounded-md border border-primary/20 bg-primary/[0.04] p-2.5 space-y-1.5">
-                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
-                    <Info className="w-3 h-3 text-primary" /> Cleaner brand names match better
+                {/* Match mode — determines which columns are required */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Match each company by</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setMatchPages(true)}
+                      className={cn('rounded-lg border p-3 text-left transition-colors', matchPages ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50')}
+                    >
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        <Building2 className="w-3.5 h-3.5" /> Brand page
+                        {matchPages && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">Reads each brand&apos;s social handle from its website and matches the exact advertiser page. Needs a Website column.</p>
+                    </button>
+                    <button
+                      onClick={() => setMatchPages(false)}
+                      className={cn('rounded-lg border p-3 text-left transition-colors', !matchPages ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50')}
+                    >
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        <Target className="w-3.5 h-3.5" /> Keyword
+                        {!matchPages && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">Keyword search of the name across all advertisers. May include lookalikes. No website needed.</p>
+                    </button>
                   </div>
-                  <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-                    We match each name to its Meta advertiser page, so use the brand&apos;s common name, not its legal entity or a URL.
-                    <span className="text-foreground/90"> &quot;Notion&quot;</span> matches;
-                    <span className="text-muted-foreground"> &quot;Notion Labs, Inc.&quot;</span> or
-                    <span className="text-muted-foreground"> &quot;notion.so&quot;</span> often won&apos;t.
-                    Strip legal suffixes (Inc, LLC, Ltd), taglines, and domains before uploading. For guaranteed matches, add a <span className="font-medium">Page URL / ID</span> column.
-                  </p>
                 </div>
+
+                {/* How deterministic matching works */}
+                {matchPages && (
+                  <div className="rounded-md border border-primary/20 bg-primary/[0.04] p-2.5 space-y-1.5">
+                    <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+                      <Info className="w-3 h-3 text-primary" /> How brand-page matching works
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                      For each company we open its <span className="font-medium text-foreground/90">website</span>, read the Facebook/Instagram handle it links to, and match that exact handle against Meta&apos;s advertiser pages. It&apos;s an identity match, not a name guess. A company we can&apos;t verify this way is flagged <span className="font-medium">Needs review</span> rather than scraped as the wrong brand.
+                    </p>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between">
-                  <Label className="text-xs">Company list</Label>
-                  <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} className="h-7 text-xs">
-                    <Upload className="w-3.5 h-3.5 mr-1" /> Upload CSV
-                  </Button>
+                  <Label className="text-xs">Company CSV</Label>
+                  {fileName && (
+                    <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} className="h-7 text-xs">
+                      <Upload className="w-3.5 h-3.5 mr-1" /> Replace
+                    </Button>
+                  )}
                   <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleFile} />
                 </div>
 
-                {fileName ? (
+                {!fileName ? (
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    className="w-full rounded-lg border border-dashed border-border hover:border-primary/40 hover:bg-muted/30 transition-colors py-8 flex flex-col items-center gap-2 text-center"
+                  >
+                    <Upload className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-sm font-medium">Upload a CSV</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Company name{matchPages ? ' + Website columns required' : ' column required'}
+                    </span>
+                  </button>
+                ) : (
                   <div className="rounded-lg border border-border/50 bg-muted/30 overflow-hidden">
                     <div className="px-3 py-2.5 flex items-center gap-3">
                       <div className="w-9 h-9 rounded-md bg-primary/15 flex items-center justify-center shrink-0">
@@ -559,7 +595,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           <div className="space-y-1">
-                            <Label className="text-[11px] text-muted-foreground">Company name</Label>
+                            <Label className="text-[11px] text-muted-foreground">Company name <span className="text-primary">*</span></Label>
                             <Select value={companyCol} onValueChange={(v) => v && setCompanyCol(v)}>
                               <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select column" /></SelectTrigger>
                               <SelectContent>
@@ -568,16 +604,16 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                             </Select>
                           </div>
                           <div className="space-y-1">
-                            <Label className="text-[11px] text-muted-foreground">Page URL / ID (optional)</Label>
-                            <Select value={pageCol} onValueChange={(v) => v && setPageCol(v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                            <Label className="text-[11px] text-muted-foreground">Website / domain {needsWebsite && <span className="text-primary">*</span>}</Label>
+                            <Select value={websiteCol} onValueChange={(v) => v && setWebsiteCol(v)}>
+                              <SelectTrigger className={cn('h-8 text-xs', needsWebsite && !websiteMapped && 'border-red-500/60')}><SelectValue placeholder="Select column" /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
                                 {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
                               </SelectContent>
                             </Select>
                           </div>
-                          <div className="space-y-1 col-span-2">
+                          <div className="space-y-1">
                             <Label className="text-[11px] text-muted-foreground">Category / industry (optional)</Label>
                             <Select value={categoryCol} onValueChange={(v) => v && setCategoryCol(v)}>
                               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
@@ -587,39 +623,33 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                               </SelectContent>
                             </Select>
                           </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Page URL / ID (advanced)</Label>
+                            <Select value={pageCol} onValueChange={(v) => v && setPageCol(v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
+                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
 
-                        {/* How matching works — plain-language guide */}
-                        <div className="mt-2.5 rounded-md border border-border/40 bg-background/40 p-2.5 space-y-1.5">
-                          <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
-                            <Info className="w-3 h-3 text-primary" /> How we find each company
-                          </div>
-                          <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-                            <span className="font-medium text-foreground/90">Page URL / ID</span> is the surest option: paste a brand&apos;s Meta Ad Library link and we scrape that exact page, no guessing.
+                        {needsWebsite && !websiteMapped && (
+                          <p className="text-[11px] text-red-400 mt-2">
+                            Brand-page matching needs a Website column. Map it above, or switch to Keyword matching.
                           </p>
-                          <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-                            <span className="font-medium text-foreground/90">Category / industry</span> is a tiebreaker. When several different brands share the same name (say a SaaS and a restaurant both called &quot;Summit&quot;), we prefer the one whose Meta page category matches what you provide here. Without it, we match on name alone and skip a company rather than scrape the wrong brand.
-                          </p>
-                        </div>
+                        )}
+                        <p className="text-[11px] text-muted-foreground/70 mt-2 leading-relaxed">
+                          <span className="font-medium text-foreground/90">Page URL / ID</span> is an optional advanced override: paste a brand&apos;s Ad Library link to pin the exact page and skip the handle lookup. <span className="font-medium">Category</span> is rarely needed.
+                        </p>
                       </div>
                     )}
                   </div>
-                ) : (
-                  <Textarea
-                    placeholder={'Nike\nApple\nShopify\nHubSpot\nNotion\n\n…one clean brand name per line'}
-                    rows={7}
-                    value={textInput}
-                    onChange={(e) => handleTextChange(e.target.value)}
-                    className="font-mono text-sm resize-none"
-                  />
                 )}
 
-                {companies.length > 0 ? (
+                {companies.length > 0 && (
                   <CompanyPreview companies={companies} dupes={dupes} onClear={clearList} />
-                ) : (
-                  <p className="text-xs text-muted-foreground/70 text-center py-2">
-                    Your parsed companies will preview here as you type or upload.
-                  </p>
                 )}
               </motion.div>
             )}
@@ -637,34 +667,8 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                 className="space-y-5"
               >
                 <div className="space-y-1">
-                  <h3 className="text-sm font-semibold">How should we find each company?</h3>
-                  <p className="text-xs text-muted-foreground">Controls how names resolve to advertisers and which ads count.</p>
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Match each company by</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => setMatchPages(true)}
-                      className={cn('rounded-lg border p-3 text-left transition-colors', matchPages ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50')}
-                    >
-                      <div className="flex items-center gap-1.5 text-sm font-medium">
-                        <Building2 className="w-3.5 h-3.5" /> Brand page
-                        {matchPages && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-1">Resolves each name to its advertiser page and scrapes its full library. Most accurate.</p>
-                    </button>
-                    <button
-                      onClick={() => setMatchPages(false)}
-                      className={cn('rounded-lg border p-3 text-left transition-colors', !matchPages ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50')}
-                    >
-                      <div className="flex items-center gap-1.5 text-sm font-medium">
-                        <Target className="w-3.5 h-3.5" /> Keyword
-                        {!matchPages && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-1">Keyword search of the name across all advertisers. May include lookalikes.</p>
-                    </button>
-                  </div>
+                  <h3 className="text-sm font-semibold">Targeting</h3>
+                  <p className="text-xs text-muted-foreground">Which market to look up brands in, and which ads count.</p>
                 </div>
 
                 {matchPages && (
@@ -672,7 +676,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                     <Label className="text-xs">Look up brands in</Label>
                     <CountryCombobox value={matchCountry} onChange={setMatchCountry} placeholder="United States" />
                     <p className="text-[11px] text-muted-foreground/70">
-                      Picks the right brand by market. A <span className="font-medium">category</span> column on your CSV disambiguates further.
+                      The market we search Meta in when resolving each brand&apos;s page.
                     </p>
                   </div>
                 )}
@@ -803,12 +807,12 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
             <Button
               size="sm"
               onClick={next}
-              disabled={step === 1 && companies.length === 0}
+              disabled={step === 1 && (companies.length === 0 || (needsWebsite && !websiteMapped))}
             >
               {step === 1 ? `Next: Targeting` : 'Next: Run settings'} <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
           ) : (
-            <Button size="sm" onClick={handleStart} disabled={companies.length === 0 || loading}>
+            <Button size="sm" onClick={handleStart} disabled={companies.length === 0 || (needsWebsite && !websiteMapped) || loading}>
               {loading ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Starting…</> : <><Play className="w-4 h-4 mr-1.5" />Start scrape ({companies.length.toLocaleString()})</>}
             </Button>
           )}

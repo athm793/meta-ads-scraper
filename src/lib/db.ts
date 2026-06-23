@@ -162,6 +162,9 @@ function initSchema(db: Database.Database) {
   if (!companyCols.includes('category')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN category TEXT`);
   if (!companyCols.includes('matched_name')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN matched_name TEXT`);
   if (!companyCols.includes('matched_page_id')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN matched_page_id TEXT`);
+  if (!companyCols.includes('fb_handle')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN fb_handle TEXT`);
+  if (!companyCols.includes('ig_handle')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN ig_handle TEXT`);
+  if (!companyCols.includes('match_method')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN match_method TEXT`);
 }
 
 export function upsertAd(ad: Ad) {
@@ -558,6 +561,9 @@ export function updateBulkCompany(id: string, data: Partial<BulkCompany>) {
       last_ad_date = COALESCE(@last_ad_date, last_ad_date),
       matched_name = COALESCE(@matched_name, matched_name),
       matched_page_id = COALESCE(@matched_page_id, matched_page_id),
+      fb_handle = COALESCE(@fb_handle, fb_handle),
+      ig_handle = COALESCE(@ig_handle, ig_handle),
+      match_method = COALESCE(@match_method, match_method),
       scraped_at = COALESCE(@scraped_at, scraped_at)
     WHERE id = @id
   `).run({
@@ -571,6 +577,9 @@ export function updateBulkCompany(id: string, data: Partial<BulkCompany>) {
     last_ad_date: data.last_ad_date ?? null,
     matched_name: data.matched_name ?? null,
     matched_page_id: data.matched_page_id ?? null,
+    fb_handle: data.fb_handle ?? null,
+    ig_handle: data.ig_handle ?? null,
+    match_method: data.match_method ?? null,
     scraped_at: data.scraped_at ?? null,
   });
 }

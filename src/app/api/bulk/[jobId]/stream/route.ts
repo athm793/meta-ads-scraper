@@ -7,64 +7,30 @@ import {
 import { scrapeAds, searchAdvertisers } from '@/lib/scraper';
 import { randomDelay } from '@/lib/browser';
 import { throttledSince } from '@/lib/rateLimiter';
-import type { Ad, BulkCompany, MediaType, Platform, SearchParams, AdvertiserSuggestion } from '@/types/ads';
+import { resolveSiteHandles, normHandle, type SiteHandles } from '@/lib/socialHandles';
+import type { Ad, BulkCompany, BulkMatchMethod, MediaType, Platform, SearchParams, AdvertiserSuggestion } from '@/types/ads';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 600;
 
-const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-// Generic tokens that don't identify a brand — ignored when comparing names so
-// "Bricklayer AI" matches on "bricklayer", not on the throwaway "ai".
-const STOPWORDS = new Set([
-  'inc', 'llc', 'ltd', 'co', 'corp', 'company', 'group', 'global', 'the', 'a', 'an',
-  'ai', 'app', 'io', 'com', 'official', 'hq', 'team', 'studio', 'labs', 'technologies', 'tech',
-]);
-
-// 0..1 score of how well a candidate advertiser name matches the target company
-// name — purely on the words, never on popularity. This is the gate that stops
-// the scraper from grabbing a popular unrelated page (e.g. CafeDrama for a
-// "Bricklayer AI" search) just because it showed up in Meta's fuzzy typeahead.
-function nameMatchScore(target: string, candidate: string): number {
-  const nt = norm(target);
-  const nc = norm(candidate);
-  if (!nt || !nc) return 0;
-  if (nt === nc) return 1;
-
-  const tokens = target.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 2 && !STOPWORDS.has(t));
-  if (tokens.length === 0) {
-    // Name is all generic/short — only accept a strong containment match.
-    return nc.includes(nt) || nt.includes(nc) ? 0.6 : 0;
+// Deterministic match: find the typeahead suggestion whose Facebook handle
+// (page_alias) or Instagram handle EXACTLY equals a handle found on the brand's
+// website. No name guessing — an identity match or nothing. FB is preferred.
+function pickHandleMatch(
+  matches: AdvertiserSuggestion[],
+  site: SiteHandles
+): { page: AdvertiserSuggestion; via: 'fb' | 'ig' } | null {
+  const fb = normHandle(site.facebook);
+  const ig = normHandle(site.instagram);
+  if (fb) {
+    const hit = matches.find((m) => m.page_alias && normHandle(m.page_alias) === fb);
+    if (hit) return { page: hit, via: 'fb' };
   }
-  const matched = tokens.filter((t) => nc.includes(t)).length;
-  const ratio = matched / tokens.length;
-  if (nc.includes(nt) || nt.includes(nc)) return Math.max(ratio, 0.85);
-  return ratio;
-}
-
-// Minimum name overlap required to accept a page. Below this we'd rather return
-// nothing (and fall back to a keyword search) than scrape the wrong brand.
-const MIN_NAME_MATCH = 0.6;
-
-// Pick the advertiser page that best matches a company. A real name match is
-// mandatory; category / verified / followers only break ties between pages that
-// already match the name. Returns null when nothing genuinely matches.
-function pickBestMatch(matches: AdvertiserSuggestion[], name: string, category?: string): AdvertiserSuggestion | null {
-  if (matches.length === 0) return null;
-  const cat = norm(category || '');
-  const scored = matches.map((m, i) => {
-    const nm = nameMatchScore(name, m.name);
-    let score = nm * 1000;
-    if (cat && norm(m.category || '').includes(cat)) score += 200; // tiebreaker only
-    if (m.verified) score += 40;
-    score += Math.min(30, Math.log10((m.likes || m.ig_followers || 0) + 1) * 4);
-    score -= i * 0.1;
-    return { m, score, nm };
-  });
-  const eligible = scored.filter((s) => s.nm >= MIN_NAME_MATCH);
-  if (eligible.length === 0) return null;
-  eligible.sort((a, b) => b.score - a.score);
-  return eligible[0].m;
+  if (ig) {
+    const hit = matches.find((m) => m.ig_username && normHandle(m.ig_username) === ig);
+    if (hit) return { page: hit, via: 'ig' };
+  }
+  return null;
 }
 
 // Conservative default — 20 parallel headless browsers from one IP is the
@@ -122,31 +88,69 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
               fetch_details: f.fetch_details,
             };
 
-            // Exact-page override: if the upload supplied a page URL/ID for this
-            // company, scrape that page directly — no fuzzy matching.
+            // --- Resolve which Meta page (or keyword) to scrape ---
+            let matchMethod: BulkMatchMethod | null = null;
+
             if (company.matched_page_id) {
+              // Advanced override: an exact page URL/ID was supplied on upload.
               scrapeParams.page_id = company.matched_page_id;
+              matchMethod = 'page_id';
             } else if (f.match_pages) {
-              // Brand-page mode: resolve the company to its actual advertiser page
-              // and scrape that page's full library. Falls back to a keyword search
-              // when no page genuinely matches the name.
-              let page: AdvertiserSuggestion | null = null;
-              try {
-                const lookupCountry = f.country && f.country !== 'ALL' ? f.country : 'US';
-                page = pickBestMatch(
-                  await searchAdvertisers(company.company_name, lookupCountry),
-                  company.company_name,
-                  company.category
-                );
-              } catch { /* fall back */ }
-              if (page) {
-                scrapeParams.page_id = page.page_id;
-                updateBulkCompany(company.id, { matched_name: page.name, matched_page_id: page.page_id });
+              // Deterministic brand-page mode: read the brand's FB/IG handle off
+              // its website and match it EXACTLY against the typeahead's
+              // page_alias / ig_username. An identity match or nothing — no name
+              // guessing. Resolve the site + typeahead concurrently so the site
+              // fetch hides behind the (rate-limited) typeahead call.
+              const lookupCountry = f.country && f.country !== 'ALL' ? f.country : 'US';
+              const [siteRes, firstRes] = await Promise.allSettled([
+                resolveSiteHandles(company.website || ''),
+                searchAdvertisers(company.company_name, lookupCountry),
+              ]);
+              const site: SiteHandles = siteRes.status === 'fulfilled' ? siteRes.value : { fetched: false, via: null };
+              let suggestions: AdvertiserSuggestion[] = firstRes.status === 'fulfilled' ? firstRes.value : [];
+
+              let hit = (site.facebook || site.instagram) ? pickHandleMatch(suggestions, site) : null;
+              // The brand's site may differ from its Meta page name — try a
+              // second typeahead keyed on the handle itself before giving up.
+              if (!hit && (site.facebook || site.instagram)) {
+                try {
+                  suggestions = await searchAdvertisers((site.facebook || site.instagram)!, lookupCountry);
+                  hit = pickHandleMatch(suggestions, site);
+                } catch { /* ignore */ }
+              }
+
+              if (hit) {
+                scrapeParams.page_id = hit.page.page_id;
+                matchMethod = hit.via === 'fb' ? 'handle_fb' : 'handle_ig';
+                updateBulkCompany(company.id, {
+                  matched_name: hit.page.name,
+                  matched_page_id: hit.page.page_id,
+                  match_method: matchMethod,
+                  fb_handle: site.facebook,
+                  ig_handle: site.instagram,
+                });
               } else {
-                scrapeParams.advertiser = company.company_name;
+                // Couldn't verify deterministically — flag for review, don't guess.
+                updateBulkCompany(company.id, {
+                  status: 'unverified',
+                  fb_handle: site.facebook,
+                  ig_handle: site.instagram,
+                  scraped_at: new Date().toISOString(),
+                });
+                incrementBulkJobProgress(jobId);
+                send({
+                  type: 'company_done',
+                  company_name: company.company_name,
+                  company_id: company.id,
+                  result: { ...company, status: 'unverified', fb_handle: site.facebook, ig_handle: site.instagram },
+                  dedup_count: totalDeduped,
+                });
+                return;
               }
             } else {
+              // Keyword mode: explicit keyword search, no handle resolution.
               scrapeParams.advertiser = company.company_name;
+              matchMethod = 'keyword';
             }
 
             for await (const batch of scrapeAds(scrapeParams, company.id)) {
@@ -208,6 +212,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
               platforms,
               spend_range: spendRange,
               last_ad_date: lastAdDate,
+              match_method: matchMethod,
               scraped_at: new Date().toISOString(),
             };
 

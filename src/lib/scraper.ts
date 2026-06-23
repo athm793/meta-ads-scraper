@@ -613,8 +613,15 @@ export async function searchAdvertisers(query: string, country = 'US'): Promise<
       page_id: string | number; name: string; category?: string; image_uri?: string;
       likes?: number; ig_followers?: number; verification?: string; ig_verification?: boolean;
       page_alias?: string; page_is_deleted?: boolean;
+      // Meta's exact IG-handle key isn't documented; capture the likely ones.
+      ig_username?: string; instagram_username?: string; ig_handle?: string; instagram_actor?: string;
     };
     const pages = (firstByPath(json, ['data', 'ad_library_main', 'typeahead_suggestions', 'page_results']) as PR[] | undefined) || [];
+    // Discovery aid: set MAS_DEBUG_TYPEAHEAD=1 to log the raw first result and
+    // confirm which field carries the Instagram handle.
+    if (process.env.MAS_DEBUG_TYPEAHEAD && pages[0]) {
+      console.log('[typeahead] raw page_results[0]:', JSON.stringify(pages[0], null, 2));
+    }
     return pages
       .filter((p) => p && !p.page_is_deleted)
       .map((p) => ({
@@ -626,6 +633,7 @@ export async function searchAdvertisers(query: string, country = 'US'): Promise<
         ig_followers: typeof p.ig_followers === 'number' ? p.ig_followers : undefined,
         verified: p.verification === 'BLUE_VERIFIED' || p.ig_verification === true,
         page_alias: p.page_alias,
+        ig_username: p.ig_username ?? p.instagram_username ?? p.ig_handle ?? p.instagram_actor ?? undefined,
       }));
   }
 
