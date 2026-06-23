@@ -5,7 +5,14 @@ import { NextRequest, NextResponse } from 'next/server';
 const ALLOWED_HOST = /(^|\.)(fbcdn\.net|facebook\.com|cdninstagram\.com|fbsbx\.com)$/i;
 
 export async function GET(req: NextRequest) {
-  const url = req.nextUrl.searchParams.get('url');
+  // `u` is the base64-encoded URL — used for inline <img>/<video> so the request
+  // URL carries no "fbcdn"/"facebook" substring for image-targeting ad-blockers
+  // to match. `url` (raw) is still accepted for downloads (an XHR, not blocked).
+  const u = req.nextUrl.searchParams.get('u');
+  let url = req.nextUrl.searchParams.get('url');
+  if (!url && u) {
+    try { url = Buffer.from(u, 'base64').toString('utf8'); } catch { /* invalid */ }
+  }
   if (!url) return NextResponse.json({ error: 'url required' }, { status: 400 });
 
   let parsed: URL;

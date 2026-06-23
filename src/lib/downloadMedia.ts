@@ -42,7 +42,12 @@ export function mediaSrc(url?: string): string {
   if (!url) return '';
   try {
     if (PROXY_HOST.test(new URL(url).hostname)) {
-      return `/api/download?inline=1&url=${encodeURIComponent(url)}`;
+      // base64 the URL so the request carries no "fbcdn"/"facebook" substring
+      // that image-targeting ad-blockers would match and strip.
+      const enc = typeof btoa === 'function'
+        ? btoa(url)
+        : Buffer.from(url, 'utf8').toString('base64');
+      return `/api/download?inline=1&u=${encodeURIComponent(enc)}`;
     }
   } catch { /* fall through */ }
   return url;
