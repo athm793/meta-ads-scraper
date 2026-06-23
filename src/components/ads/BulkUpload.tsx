@@ -183,11 +183,11 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   useEffect(() => {
     const v = Number(localStorage.getItem('mas_bulk_workers'));
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (v >= 1 && v <= 20) setWorkers(v);
+    if (v >= 1 && v <= 10) setWorkers(v);
   }, []);
 
   function changeWorkers(v: number) {
-    const n = Math.min(20, Math.max(1, v));
+    const n = Math.min(10, Math.max(1, v));
     setWorkers(n);
     try { localStorage.setItem('mas_bulk_workers', String(n)); } catch { /* ignore */ }
   }
@@ -587,7 +587,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
             <input
               type="range"
               min={1}
-              max={20}
+              max={10}
               step={1}
               value={workers}
               onChange={(e) => changeWorkers(Number(e.target.value))}

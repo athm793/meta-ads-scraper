@@ -37,7 +37,8 @@ function pickBestMatch(matches: AdvertiserSuggestion[], name: string, category?:
 // Conservative default — 20 parallel headless browsers from one IP is the
 // fastest way to get rate-limited. The global limiter paces requests on top.
 const DEFAULT_WORKERS = 4;
-const clampWorkers = (n: unknown) => Math.min(20, Math.max(1, Math.round(Number(n)) || DEFAULT_WORKERS));
+const MAX_WORKERS = 10;
+const clampWorkers = (n: unknown) => Math.min(MAX_WORKERS, Math.max(1, Math.round(Number(n)) || DEFAULT_WORKERS));
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ jobId: string }> }) {
   const { jobId } = await params;
@@ -112,6 +113,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
             }
 
             for await (const batch of scrapeAds(scrapeParams, company.id)) {
+              // Breaking on abort runs the generator's finally → closes the
+              // browser promptly instead of waiting out the whole company.
+              if (req.signal.aborted) break;
               localAds.push(...batch);
             }
 

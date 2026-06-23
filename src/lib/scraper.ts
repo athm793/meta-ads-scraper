@@ -1,5 +1,5 @@
 import type { Page, BrowserContext } from 'playwright';
-import { launchBrowser, createContext, randomDelay } from './browser';
+import { launchBrowser, createContext, closeBrowser, randomDelay } from './browser';
 import { parseGraphQLResponse, parseAdDetails } from './parser';
 import { recordOk, recordDown, MetaSignatureError } from './metaHealth';
 import { acquire, reportBlocked, reportOk, isBlockStatus, looksBlocked } from './rateLimiter';
@@ -269,11 +269,17 @@ export async function* scrapeAds(
   const collectedAds: Ad[] = [];
   const pendingJsons: unknown[] = [];
 
-  const browser = await launchBrowser(true);
-  const context = await createContext(browser, nextProxy());
-  const page = await context.newPage();
-
+  // Browser is created INSIDE the try so any failure during context/page
+  // creation (common under heavy concurrency) still hits the finally and gets
+  // closed — otherwise the launched browser would leak with no ref to close it.
+  let browser: import('playwright').Browser | undefined;
   let rawHtml = '';
+
+  try {
+    const b = await launchBrowser(true);
+    browser = b;
+    const context = await createContext(b, nextProxy());
+    const page = await context.newPage();
 
   // Intercept ALL responses:
   // 1. The main page HTML (SSR data) — captured as raw text before React hydrates it
@@ -317,7 +323,6 @@ export async function* scrapeAds(
     } catch { /* ignore */ }
   });
 
-  try {
     const targetUrl = buildUrl(params);
     console.log('[scraper] navigating to:', targetUrl);
 
@@ -401,9 +406,9 @@ export async function* scrapeAds(
     // matches", which we can't reliably tell apart from a structure change here.
     if (collectedAds.length > 0) recordOk('search');
   } finally {
-    await page.close().catch(() => {});
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
+    // Closing the browser tears down its context and page too. closeBrowser
+    // also deregisters it from the live-browser set used at shutdown.
+    await closeBrowser(browser);
   }
 }
 

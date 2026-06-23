@@ -16,10 +16,41 @@ async function getChromium() {
 
 const PROFILE_DIR = path.join(process.cwd(), 'data', 'browser-profile');
 
+// Every browser we launch is tracked here so we can guarantee teardown — both
+// when a scrape finishes and when the process is shutting down. Without this,
+// a browser whose context/page creation throws (common under heavy concurrency)
+// would leak with no reference left to close it.
+const liveBrowsers = new Set<import('playwright').Browser>();
+let shutdownHooked = false;
+
+export function liveBrowserCount(): number {
+  return liveBrowsers.size;
+}
+
+/** Close every tracked browser. Best-effort; used on process shutdown. */
+export async function closeAllBrowsers(): Promise<void> {
+  const all = [...liveBrowsers];
+  liveBrowsers.clear();
+  await Promise.all(all.map((b) => b.close().catch(() => {})));
+}
+
+function ensureShutdownHook(): void {
+  if (shutdownHooked) return;
+  shutdownHooked = true;
+  // Best-effort: race to kill headless Chromium when the server stops or
+  // crashes, so browsers don't orphan. We don't call process.exit — other
+  // listeners (e.g. Next.js) own the actual shutdown.
+  const onSignal = () => { void closeAllBrowsers(); };
+  process.once('SIGINT', onSignal);
+  process.once('SIGTERM', onSignal);
+  process.once('beforeExit', onSignal);
+}
+
 export async function launchBrowser(headless = true) {
   if (!fs.existsSync(PROFILE_DIR)) {
     fs.mkdirSync(PROFILE_DIR, { recursive: true });
   }
+  ensureShutdownHook();
   const chromium = await getChromium();
   const browser = await chromium.launch({
     headless,
@@ -30,7 +61,17 @@ export async function launchBrowser(headless = true) {
       '--disable-features=IsolateOrigins,site-per-process',
     ],
   });
+  liveBrowsers.add(browser);
+  // Drop from the registry if it dies/closes on its own.
+  browser.on('disconnected', () => liveBrowsers.delete(browser));
   return browser;
+}
+
+/** Close a browser and stop tracking it. Always use this instead of browser.close(). */
+export async function closeBrowser(browser?: import('playwright').Browser): Promise<void> {
+  if (!browser) return;
+  liveBrowsers.delete(browser);
+  await browser.close().catch(() => {});
 }
 
 export async function createContext(browser: import('playwright').Browser, proxy?: ProxySetting) {

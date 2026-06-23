@@ -28,6 +28,9 @@ export async function POST(req: NextRequest) {
 
         const gen = scrapeAds(params, jobId);
         for await (const batch of gen) {
+          // Client hit stop / navigated away — break so the generator's finally
+          // closes the browser instead of scraping on in the background.
+          if (req.signal.aborted) break;
           for (const ad of batch) {
             const enriched: Ad = { ...ad, is_new: !previousIds.has(ad.id) };
             upsertAd(enriched);
