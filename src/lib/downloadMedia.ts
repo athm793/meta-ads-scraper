@@ -46,6 +46,13 @@ export function adMediaUrls(ad: Ad): Array<{ url: string; kind: 'video' | 'image
   return out;
 }
 
+/** Downloads one specific media URL (e.g. the video/image being viewed). */
+export async function downloadSingleUrl(ad: Ad, url: string): Promise<void> {
+  if (!url) return;
+  const blob = await fetchBlob(url);
+  triggerDownload(blob, `${slug(ad.advertiser_name)}_${ad.id}.${extFor(url, blob.type)}`);
+}
+
 /**
  * Downloads an ad's media. A single asset downloads directly; multiple assets
  * are bundled into a zip. Files are named <advertiser>_<id>[_n].<ext>.

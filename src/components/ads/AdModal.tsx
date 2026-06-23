@@ -12,7 +12,7 @@ import { motion } from 'framer-motion';
 import { format } from 'date-fns';
 import { TagEditor } from './TagEditor';
 import { adsToCsv, exportFilename } from '@/lib/exportCsv';
-import { downloadAdMedia, adMediaUrls } from '@/lib/downloadMedia';
+import { downloadAdMedia, adMediaUrls, downloadSingleUrl } from '@/lib/downloadMedia';
 
 interface AdModalProps {
   ad: Ad | null;
@@ -32,6 +32,7 @@ function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
 export function AdModal({ ad, open, onClose }: AdModalProps) {
   const [carouselIdx, setCarouselIdx] = useState(0);
   const [dlMedia, setDlMedia] = useState(false);
+  const [dlItem, setDlItem] = useState(false);
 
   if (!ad) return null;
 
@@ -40,6 +41,11 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
     if (!ad) return;
     setDlMedia(true);
     try { await downloadAdMedia(ad); } finally { setDlMedia(false); }
+  }
+  async function handleDownloadOne(url?: string) {
+    if (!ad || !url) return;
+    setDlItem(true);
+    try { await downloadSingleUrl(ad, url); } finally { setDlItem(false); }
   }
 
   const hasDemo = ad.demographic_distribution.length > 0 || ad.region_distribution.length > 0;
@@ -194,13 +200,10 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                     )}
                   </div>
                   {videoSrc && (
-                    <a
-                      href={`/api/download?url=${encodeURIComponent(videoSrc)}`}
-                      download
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
-                    >
-                      <Download className="w-3.5 h-3.5" /> Download Video
-                    </a>
+                    <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => handleDownloadOne(videoSrc)} disabled={dlItem}>
+                      {dlItem ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1.5" />}
+                      Download Video
+                    </Button>
                   )}
                 </div>
               ) : thumbSrc ? (
@@ -209,13 +212,10 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={thumbSrc} alt="Ad creative" className="w-full max-h-96 object-contain" />
                   </div>
-                  <a
-                    href={`/api/download?url=${encodeURIComponent(thumbSrc)}`}
-                    download
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Download Image
-                  </a>
+                  <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => handleDownloadOne(thumbSrc)} disabled={dlItem}>
+                    {dlItem ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1.5" />}
+                    Download Image
+                  </Button>
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-40 text-muted-foreground text-sm">No creative available</div>

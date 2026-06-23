@@ -16,13 +16,14 @@ import { HookExtractor } from '@/components/ads/HookExtractor';
 import { BulkUpload } from '@/components/ads/BulkUpload';
 import { BulkResultsTable } from '@/components/ads/BulkResultsTable';
 import { CompanyDrawer } from '@/components/ads/CompanyDrawer';
+import { AdvertiserSearch } from '@/components/ads/AdvertiserSearch';
 import { ResultsFilterBar, EMPTY_RESULT_FILTERS, type ResultFilters } from '@/components/ads/ResultsFilterBar';
 import { Pagination } from '@/components/ads/Pagination';
 import { adsToCsv, exportFilename } from '@/lib/exportCsv';
-import type { Ad, SearchParams, Collection, Tag, BulkCompany, BulkJob } from '@/types/ads';
+import type { Ad, SearchParams, Collection, Tag, BulkCompany, BulkJob, AdvertiserSuggestion } from '@/types/ads';
 import {
-  Search, BookMarked, Users, Zap, FolderPlus, Download, SlidersHorizontal,
-  Square, Layers,
+  Search, BookMarked, Users, Zap, FolderPlus, Download,
+  Square, Layers, PanelLeftOpen,
 } from 'lucide-react';
 
 const DEFAULT_PARAMS: SearchParams = {
@@ -113,7 +114,14 @@ export default function HomePage() {
     enabled: tab === 'saved',
   });
 
-  async function startScrape() {
+  // User picked an advertiser from the typeahead → scrape that page's full library
+  function pickAdvertiser(s: AdvertiserSuggestion) {
+    setKeyword('');
+    setAdvertiser(s.name);
+    startScrape({ page_id: s.page_id, advertiser: s.name, keyword: undefined });
+  }
+
+  async function startScrape(override?: Partial<SearchParams>) {
     if (scraping) return;
     const params: SearchParams = {
       ...filterParams,
@@ -121,8 +129,9 @@ export default function HomePage() {
       advertiser: advertiser || undefined,
       deep_search: deepSearch,
       fetch_details: deepSearch,
+      ...override,
     };
-    if (!params.keyword && !params.advertiser) {
+    if (!params.keyword && !params.advertiser && !params.page_id) {
       alert('Enter a keyword or advertiser name to search');
       return;
     }
@@ -439,6 +448,20 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
+      {/* Collapsed reopen rail — appears on the left edge when filters are hidden */}
+      {!showFilters && tab === 'search' && (
+        <button
+          onClick={() => setShowFilters(true)}
+          title="Show filters"
+          className="group shrink-0 w-10 border-r border-border/50 bg-card/30 hover:bg-accent/50 flex flex-col items-center pt-3.5 gap-2 transition-colors"
+        >
+          <PanelLeftOpen className="w-4 h-4 text-muted-foreground group-hover:text-foreground transition-colors" />
+          <span className="[writing-mode:vertical-rl] rotate-180 text-[11px] font-medium uppercase tracking-wider text-muted-foreground group-hover:text-foreground transition-colors">
+            Filters
+          </span>
+        </button>
+      )}
+
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Top nav */}
         <header className="border-b border-border/50 px-4 py-3 flex items-center gap-3 shrink-0 bg-card/50 backdrop-blur-sm">
@@ -471,9 +494,6 @@ export default function HomePage() {
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setCollectionsOpen(true)} className="h-8 text-xs">
                   <FolderPlus className="w-3 h-3 mr-1" />Collections
-                </Button>
-                <Button size="sm" variant={showFilters ? 'outline' : 'default'} onClick={() => setShowFilters((v) => !v)} className="h-8 text-xs" title={showFilters ? 'Hide filters' : 'Show filters'}>
-                  <SlidersHorizontal className="w-3 h-3 mr-1" />{showFilters ? 'Hide filters' : 'Filters'}
                 </Button>
                 {filteredAds.length > 0 && (
                   <>
@@ -514,16 +534,13 @@ export default function HomePage() {
                       className="pl-9"
                     />
                   </div>
-                  <div className="flex-1 relative">
-                    <Users className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                    <Input
-                      placeholder="Advertiser / page name..."
-                      value={advertiser}
-                      onChange={(e) => setAdvertiser(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && startScrape()}
-                      className="pl-9"
-                    />
-                  </div>
+                  <AdvertiserSearch
+                    value={advertiser}
+                    onChange={setAdvertiser}
+                    country={filterParams.country || 'US'}
+                    onSelect={pickAdvertiser}
+                    onEnter={() => startScrape()}
+                  />
                   <Button
                     size="sm"
                     variant={deepSearch ? 'default' : 'outline'}
@@ -534,9 +551,15 @@ export default function HomePage() {
                     <Layers className="w-3.5 h-3.5 mr-1.5" />
                     Deep
                   </Button>
-                  <Button onClick={startScrape} disabled={scraping} className="px-6 h-10 shrink-0">
-                    {scraping ? 'Scraping...' : 'Scrape'}
-                  </Button>
+                  {scraping ? (
+                    <Button onClick={stopScrape} variant="destructive" className="px-6 h-10 shrink-0">
+                      <Square className="w-3.5 h-3.5 mr-1.5 fill-current" /> Stop
+                    </Button>
+                  ) : (
+                    <Button onClick={() => startScrape()} className="px-6 h-10 shrink-0">
+                      Scrape
+                    </Button>
+                  )}
                 </div>
 
                 {/* Inline scrape status */}
@@ -553,12 +576,6 @@ export default function HomePage() {
                       <span className="text-muted-foreground">
                         {deepSearch ? 'Deep scraping' : 'Scraping'} — {liveAds.length} ads found
                       </span>
-                      <button
-                        onClick={stopScrape}
-                        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
-                      >
-                        <Square className="w-3 h-3" /> Stop
-                      </button>
                     </motion.div>
                   )}
                 </AnimatePresence>

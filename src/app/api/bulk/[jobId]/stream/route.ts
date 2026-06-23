@@ -4,11 +4,20 @@ import {
   incrementBulkJobProgress, completeBulkJob, updateBulkJobStatus, upsertAd,
   getBulkJobStatus, resetStuckBulkCompanies,
 } from '@/lib/db';
-import { scrapeAds } from '@/lib/scraper';
-import type { Ad, BulkCompany, MediaType, Platform } from '@/types/ads';
+import { scrapeAds, searchAdvertisers } from '@/lib/scraper';
+import type { Ad, BulkCompany, MediaType, Platform, SearchParams, AdvertiserSuggestion } from '@/types/ads';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 600;
+
+// Pick the advertiser page that best matches a company name: exact (case/space-
+// insensitive) name match first, otherwise the typeahead's top (most relevant) hit.
+function pickBestMatch(matches: AdvertiserSuggestion[], name: string): AdvertiserSuggestion | null {
+  if (matches.length === 0) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const target = norm(name);
+  return matches.find((m) => norm(m.name) === target) || matches[0];
+}
 
 const DEFAULT_WORKERS = 10;
 const clampWorkers = (n: unknown) => Math.min(20, Math.max(1, Math.round(Number(n)) || DEFAULT_WORKERS));
@@ -54,16 +63,29 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
             const localAds: Ad[] = [];
             const f = job!.filters ?? {};
 
-            for await (const batch of scrapeAds(
-              {
-                advertiser: company.company_name,
-                status: f.status ?? 'ALL',
-                ad_type: f.media_types && f.media_types.length === 1 ? f.media_types[0] : undefined,
-                limit: 200,
-                fetch_details: f.fetch_details,
-              },
-              company.id
-            )) {
+            const scrapeParams: SearchParams = {
+              status: f.status ?? 'ALL',
+              ad_type: f.media_types && f.media_types.length === 1 ? f.media_types[0] : undefined,
+              limit: 200,
+              fetch_details: f.fetch_details,
+            };
+
+            // Brand-page mode: resolve the company to its actual advertiser page
+            // and scrape that page's full library. Falls back to a keyword search
+            // when no matching page is found.
+            if (f.match_pages) {
+              let page: AdvertiserSuggestion | null = null;
+              try { page = pickBestMatch(await searchAdvertisers(company.company_name), company.company_name); } catch { /* fall back */ }
+              if (page) {
+                scrapeParams.page_id = page.page_id;
+              } else {
+                scrapeParams.advertiser = company.company_name;
+              }
+            } else {
+              scrapeParams.advertiser = company.company_name;
+            }
+
+            for await (const batch of scrapeAds(scrapeParams, company.id)) {
               localAds.push(...batch);
             }
 

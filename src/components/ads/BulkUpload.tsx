@@ -173,6 +173,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [scopeMedia, setScopeMedia] = useState<MediaType[]>([]);
   const [scopePlatforms, setScopePlatforms] = useState<Platform[]>([]);
   const [fetchDetails, setFetchDetails] = useState(false);
+  const [matchPages, setMatchPages] = useState(true);
   const [workers, setWorkers] = useState(10);
 
   // Restore the last-used worker count so it persists between runs/startups
@@ -319,6 +320,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
             media_types: scopeMedia,
             platforms: scopePlatforms,
             fetch_details: fetchDetails,
+            match_pages: matchPages,
             workers,
           },
         }),
@@ -472,6 +474,30 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
         <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-3">
           <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
             <SlidersHorizontal className="w-3 h-3" /> Search scope
+          </div>
+
+          {/* Match mode */}
+          <div className="space-y-1.5">
+            <Label className="text-[11px] text-muted-foreground">Match each company by</Label>
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => setMatchPages(true)}
+                className={`flex-1 px-2.5 py-1.5 rounded-md text-xs border transition-colors ${matchPages ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
+              >
+                Brand page
+              </button>
+              <button
+                onClick={() => setMatchPages(false)}
+                className={`flex-1 px-2.5 py-1.5 rounded-md text-xs border transition-colors ${!matchPages ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
+              >
+                Keyword
+              </button>
+            </div>
+            <p className="text-[11px] text-muted-foreground/70">
+              {matchPages
+                ? 'Resolves each name to its advertiser page and scrapes that page’s full library (most accurate). Falls back to keyword if no page is found.'
+                : 'Keyword search of the name across all advertisers (may include lookalikes).'}
+            </p>
           </div>
 
           <div className="space-y-1.5">

@@ -13,6 +13,16 @@ export const AD_CSV_HEADER = [
   'Top Regions', 'Age/Gender Breakdown',
 ].map((h) => `"${h}"`).join(',');
 
+// Joins media URLs onto a SINGLE line (space-separated — URLs never contain
+// spaces) and caps the count. Newline-separated cells broke row alignment and
+// blew past Excel's ~32k-char cell limit, corrupting rows with many images.
+function joinUrls(urls: Array<string | undefined>): string {
+  const uniq = [...new Set(urls.filter(Boolean) as string[])];
+  const MAX = 25;
+  const out = uniq.slice(0, MAX).join(' ');
+  return uniq.length > MAX ? `${out} (+${uniq.length - MAX} more — use JSON export)` : out;
+}
+
 export function adToCsvRow(ad: Ad): string {
   const imageUrls = [...(ad.media_urls ?? []), ...ad.carousel_cards.map((c) => c.image_url).filter(Boolean) as string[]];
   const videoUrls = [...(ad.video_urls ?? []), ...ad.carousel_cards.map((c) => c.video_url).filter(Boolean) as string[]];
@@ -25,8 +35,8 @@ export function adToCsvRow(ad: Ad): string {
     ad.headline || '',
     ad.cta_text || '',
     ad.link_url || '',
-    [...new Set(imageUrls)].join('\n'),
-    [...new Set(videoUrls)].join('\n'),
+    joinUrls(imageUrls),
+    joinUrls(videoUrls),
     ad.platforms.join(', '),
     ad.started_at || '',
     ad.stopped_at || '',

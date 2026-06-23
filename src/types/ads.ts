@@ -83,6 +83,7 @@ export interface AdScopeFilters {
   platforms?: Platform[];          // empty/undefined = all
   fetch_details?: boolean;         // run the "See ad details" fetch per ad
   workers?: number;                // parallel companies scraped at once (1–20)
+  match_pages?: boolean;           // resolve each company to its brand page (typeahead) and scrape that page
 }
 
 export interface SearchParams {
@@ -125,6 +126,18 @@ export interface Tag {
   color?: string;
   created_at: string;
   ad_count?: number;
+}
+
+// An advertiser page returned by Meta's search typeahead
+export interface AdvertiserSuggestion {
+  page_id: string;
+  name: string;
+  category?: string;
+  image_uri?: string;
+  likes?: number;
+  ig_followers?: number;
+  verified?: boolean;
+  page_alias?: string;
 }
 
 export interface BulkJob {

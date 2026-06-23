@@ -1,7 +1,7 @@
-import type { Page } from 'playwright';
+import type { Page, BrowserContext } from 'playwright';
 import { launchBrowser, createContext, randomDelay } from './browser';
 import { parseGraphQLResponse, parseAdDetails } from './parser';
-import type { Ad, SearchParams } from '@/types/ads';
+import type { Ad, SearchParams, AdvertiserSuggestion } from '@/types/ads';
 
 // Captured "See ad details" (AdLibraryV3AdDetailsQuery) request, used to replay
 // the details query for every ad without re-rendering the page per ad.
@@ -427,4 +427,164 @@ export async function scrapeAdvertiserDeep(
   }
 
   return ads;
+}
+
+// ---------------------------------------------------------------------------
+// Advertiser typeahead — Meta's search-box suggestions of advertiser PAGES.
+//
+// A single headless browser is kept warm on the Ad Library page; once we've
+// captured the typeahead request's signature (doc_id + tokens), every search
+// is just an in-page GraphQL replay swapping the query string — fast, no new
+// browser per keystroke. The context self-heals if it goes stale/closed.
+// ---------------------------------------------------------------------------
+
+interface TypeaheadCtx {
+  browser: import('playwright').Browser;
+  context: BrowserContext;
+  page: Page;
+  form: Record<string, string>;
+  expires: number;
+}
+
+let typeaheadCtx: TypeaheadCtx | null = null;
+let typeaheadInit: Promise<TypeaheadCtx> | null = null;
+let typeaheadIdle: ReturnType<typeof setTimeout> | null = null;
+
+async function teardownTypeahead() {
+  if (typeaheadIdle) { clearTimeout(typeaheadIdle); typeaheadIdle = null; }
+  const ctx = typeaheadCtx;
+  typeaheadCtx = null;
+  if (!ctx) return;
+  await ctx.page.close().catch(() => {});
+  await ctx.context.close().catch(() => {});
+  await ctx.browser.close().catch(() => {});
+}
+
+// Close the warm browser after a few minutes of no searches so it never lingers
+function bumpTypeaheadIdle() {
+  if (typeaheadIdle) clearTimeout(typeaheadIdle);
+  typeaheadIdle = setTimeout(() => { void teardownTypeahead(); }, 3 * 60 * 1000);
+}
+
+async function buildTypeaheadCtx(): Promise<TypeaheadCtx> {
+  const browser = await launchBrowser(true);
+  const context = await createContext(browser);
+  const page = await context.newPage();
+
+  let form: Record<string, string> | null = null;
+  page.on('request', (req) => {
+    if (form || req.method() !== 'POST' || !req.url().includes('/api/graphql')) return;
+    const post = req.postData() || '';
+    if (!/useAdLibraryTypeaheadSuggestion/i.test(post)) return;
+    const f: Record<string, string> = {};
+    new URLSearchParams(post).forEach((v, k) => { f[k] = v; });
+    if (f.variables && /queryString/.test(f.variables)) form = f;
+  });
+
+  try {
+    await page.goto(
+      'https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&media_type=all&q=ad&search_type=keyword_unordered',
+      { waitUntil: 'domcontentloaded', timeout: 30000 }
+    );
+    await randomDelay(3000, 4500);
+    await handleCookieConsent(page);
+    await randomDelay(800, 1500);
+
+    const box = page.locator('input[type="search"], input[placeholder*="eyword"], input[placeholder*="dvertiser"]').first();
+    await box.click({ timeout: 6000 }).catch(() => {});
+    await page.keyboard.press('Control+A').catch(() => {});
+    await page.keyboard.press('Backspace').catch(() => {});
+    await page.keyboard.type('nike', { delay: 140 }).catch(() => {});
+
+    for (let i = 0; i < 25 && !form; i++) await randomDelay(150, 250);
+    if (!form) throw new Error('typeahead signature not captured');
+
+    const ctx: TypeaheadCtx = { browser, context, page, form, expires: Date.now() + 10 * 60 * 1000 };
+    typeaheadCtx = ctx;
+    return ctx;
+  } catch (err) {
+    await page.close().catch(() => {});
+    await context.close().catch(() => {});
+    await browser.close().catch(() => {});
+    throw err;
+  }
+}
+
+async function getTypeaheadCtx(): Promise<TypeaheadCtx> {
+  if (typeaheadCtx && Date.now() < typeaheadCtx.expires && !typeaheadCtx.page.isClosed()) {
+    return typeaheadCtx;
+  }
+  await teardownTypeahead();
+  if (!typeaheadInit) {
+    typeaheadInit = buildTypeaheadCtx().finally(() => { typeaheadInit = null; });
+  }
+  return typeaheadInit;
+}
+
+/** Returns advertiser pages matching a query, via Meta's search typeahead. */
+export async function searchAdvertisers(query: string, country = 'US'): Promise<AdvertiserSuggestion[]> {
+  const q = query.trim();
+  if (q.length < 2) return [];
+
+  async function run(ctx: TypeaheadCtx): Promise<AdvertiserSuggestion[]> {
+    const form = { ...ctx.form };
+    let vars: Record<string, unknown>;
+    try { vars = JSON.parse(form.variables); } catch { return []; }
+    vars.queryString = q;
+    vars.country = country;
+    form.variables = JSON.stringify(vars);
+    const body = new URLSearchParams(form).toString();
+
+    const text = await ctx.page.evaluate(
+      async ({ body, lsd }) => {
+        const r = await fetch('/api/graphql/', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-fb-lsd': lsd },
+          body,
+          credentials: 'include',
+        });
+        return r.text();
+      },
+      { body, lsd: form.lsd || '' }
+    );
+
+    const json = parseMaybePrefixed(text) as Record<string, unknown> | null;
+    type PR = {
+      page_id: string | number; name: string; category?: string; image_uri?: string;
+      likes?: number; ig_followers?: number; verification?: string; ig_verification?: boolean;
+      page_alias?: string; page_is_deleted?: boolean;
+    };
+    const pages = (firstByPath(json, ['data', 'ad_library_main', 'typeahead_suggestions', 'page_results']) as PR[] | undefined) || [];
+    return pages
+      .filter((p) => p && !p.page_is_deleted)
+      .map((p) => ({
+        page_id: String(p.page_id),
+        name: p.name,
+        category: p.category,
+        image_uri: p.image_uri,
+        likes: typeof p.likes === 'number' ? p.likes : undefined,
+        ig_followers: typeof p.ig_followers === 'number' ? p.ig_followers : undefined,
+        verified: p.verification === 'BLUE_VERIFIED' || p.ig_verification === true,
+        page_alias: p.page_alias,
+      }));
+  }
+
+  try {
+    const r = await run(await getTypeaheadCtx());
+    bumpTypeaheadIdle();
+    return r;
+  } catch {
+    // One retry with a fresh context (handles a stale/closed page)
+    await teardownTypeahead();
+    try { const r = await run(await getTypeaheadCtx()); bumpTypeaheadIdle(); return r; } catch { return []; }
+  }
+}
+
+function firstByPath(obj: unknown, path: string[]): unknown {
+  let cur = obj;
+  for (const key of path) {
+    if (!cur || typeof cur !== 'object') return undefined;
+    cur = (cur as Record<string, unknown>)[key];
+  }
+  return cur;
 }
