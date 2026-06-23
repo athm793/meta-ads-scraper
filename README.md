@@ -155,7 +155,7 @@ src/
 
 The scraper reads the public Ad Library at a deliberately polite pace and adapts when Meta pushes back:
 
-- **Reactive backoff (default)** — normal requests run at full speed. Only when Meta actually pushes back (HTTP 429/403 or a "try again later" body) does a short cooldown (2s up to 60s, with jitter) kick in across all workers, lifting once Meta serves cleanly again. If a run gets throttled, the UI says so instead of silently returning partial data.
+- **Reactive backoff (default)** — normal requests run at full speed. Only when Meta actually returns an HTTP 429/403 does a short cooldown (2s up to 60s, with jitter) kick in across all workers, lifting once Meta serves cleanly again. If a run gets throttled, the UI says so instead of silently returning partial data. (Detail "See ad details" requests are additionally paced with a per-request delay so a full brand library doesn't burst into a rate limit.)
 - **Optional proactive throttle** — off by default. Set `META_RATE_PER_SEC` (and optionally `META_RATE_BURST`) to cap the whole process to a fixed requests/sec across every worker, for shared IPs or extra-cautious runs.
 - **Conservative bulk concurrency** — bulk defaults to 4 parallel workers (capped at 10) with a jittered gap between companies. High worker counts from a single IP are the most common way to get throttled.
 - **Optional proxy rotation** — fully opt-in for heavier use. Provide proxies via `META_SCRAPER_PROXIES` (comma-separated) or a `data/proxies.txt` file (one per line), formatted `[scheme://][user:pass@]host:port`. They're rotated round-robin per browser context. With none configured, the scraper connects directly, exactly as before.

@@ -2,7 +2,7 @@ import type { Page, BrowserContext } from 'playwright';
 import { launchBrowser, createContext, closeBrowser, randomDelay } from './browser';
 import { parseGraphQLResponse, parseAdDetails } from './parser';
 import { recordOk, recordDown, MetaSignatureError } from './metaHealth';
-import { acquire, reportBlocked, reportOk, isBlockStatus, looksBlocked } from './rateLimiter';
+import { acquire, reportBlocked, reportOk, isBlockStatus } from './rateLimiter';
 import { nextProxy } from './proxies';
 import type { Ad, SearchParams, AdvertiserSuggestion } from '@/types/ads';
 
@@ -18,9 +18,9 @@ interface DetailSignature {
 // Matches Meta's ad-details GraphQL query (e.g. AdLibraryV3AdDetailsQuery —
 // the version prefix changes over time, so match the stable "AdDetails" part).
 const DETAIL_QUERY_RE = /AdDetails/i;
-// In-page detail fetches per batch. Kept low so a single page doesn't burst
-// Meta; the global rate limiter paces the batches themselves.
-const DETAIL_CONCURRENCY = 3;
+// In-page detail fetches per batch. Kept low (plus a jittered per-fetch delay)
+// so scraping a full brand library doesn't burst Meta into a rate limit.
+const DETAIL_CONCURRENCY = 2;
 
 const ADS_LIBRARY_BASE = 'https://www.facebook.com/ads/library/';
 
@@ -208,11 +208,15 @@ async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promi
   // One token per batch — paces detail enrichment against everything else.
   await acquire();
 
-  // Run all replays inside the page event loop with a concurrency cap
+  // Run all replays inside the page event loop with a concurrency cap AND a
+  // jittered delay between each fetch — a full brand library is 50-200 ads, and
+  // firing all their detail queries back-to-back is exactly what trips Meta's
+  // rate limit. Pacing keeps it to a polite few requests/second.
   const results = await page.evaluate(
-    async ({ jobs, url, lsd, concurrency }) => {
+    async ({ jobs, url, lsd, concurrency, delayMin, delayJitter }) => {
       const out: Array<{ id: string; status: number; text: string }> = [];
       const queue = [...jobs];
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
       async function worker() {
         while (queue.length) {
           const job = queue.shift();
@@ -228,19 +232,23 @@ async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promi
           } catch {
             out.push({ id: job.id, status: 0, text: '' });
           }
+          if (queue.length) await sleep(delayMin + Math.random() * delayJitter);
         }
       }
       await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
       return out;
     },
-    { jobs, url: sig.url, lsd: sig.lsd, concurrency: DETAIL_CONCURRENCY }
+    { jobs, url: sig.url, lsd: sig.lsd, concurrency: DETAIL_CONCURRENCY, delayMin: 250, delayJitter: 400 }
   );
 
   let blocked = false;
   let anyOk = false;
   const byId = new Map(batch.map((a) => [a.id, a]));
   for (const res of results) {
-    if (isBlockStatus(res.status) || looksBlocked(res.text)) blocked = true;
+    // Only an HTTP 429/403 is a real rate-limit. We deliberately do NOT scan the
+    // response body — ad copy and per-ad error pages contain phrases like "try
+    // again later" that would false-positive as a block.
+    if (isBlockStatus(res.status)) blocked = true;
     else if (res.status === 200) anyOk = true;
     const ad = byId.get(res.id);
     if (!ad) continue;
@@ -311,7 +319,6 @@ export async function* scrapeAds(
       // Capture scroll-triggered GraphQL POST responses (pagination)
       if (method === 'POST' && url.includes('/api/graphql')) {
         const text = await response.text().catch(() => '');
-        if (looksBlocked(text)) { reportBlocked(); return; }
         if (!text.includes('ad_archive_id')) return;
         reportOk();
         for (const line of text.split('\n')) {
@@ -605,7 +612,7 @@ export async function searchAdvertisers(query: string, country = 'US'): Promise<
       { body, lsd: form.lsd || '' }
     );
 
-    if (isBlockStatus(status) || looksBlocked(text)) { reportBlocked(); return []; }
+    if (isBlockStatus(status)) { reportBlocked(); return []; }
     reportOk();
 
     const json = parseMaybePrefixed(text) as Record<string, unknown> | null;

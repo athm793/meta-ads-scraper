@@ -117,11 +117,9 @@ export async function acquire(): Promise<void> {
 }
 
 // ---- block detection helpers ----
+// Only an HTTP 429/403 counts as a real rate-limit. We deliberately don't scan
+// response bodies for phrases like "rate limit" / "try again later" — those
+// occur in ad copy and Meta's per-ad error pages and caused false positives.
 export function isBlockStatus(status: number): boolean {
   return status === 429 || status === 403;
-}
-
-export function looksBlocked(text: string): boolean {
-  if (!text) return false;
-  return /too many requests|rate limit|temporarily blocked|try again later|please wait a few minutes/i.test(text);
 }
