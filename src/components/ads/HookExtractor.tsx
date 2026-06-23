@@ -138,31 +138,34 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
   }
 
   const maxAngle = Math.max(1, ...stats.angleStats.map((a) => a.count));
+  const advertiserCount = useMemo(() => new Set(records.map((r) => r.advertiser)).size, [records]);
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent side="right" className="w-[520px] max-w-[95vw] flex flex-col">
-        <SheetHeader>
+      <SheetContent side="right" className="w-[560px] max-w-[96vw] flex flex-col gap-0 p-0">
+        <SheetHeader className="px-5 py-4 border-b border-border/50 shrink-0">
           <SheetTitle>Hook Lab</SheetTitle>
+          <p className="text-xs text-muted-foreground">
+            {records.length.toLocaleString()} {records.length === 1 ? 'hook' : 'hooks'} across {advertiserCount.toLocaleString()} {advertiserCount === 1 ? 'advertiser' : 'advertisers'}
+          </p>
         </SheetHeader>
 
-        {/* View tabs */}
-        <div className="flex p-0.5 gap-0.5 rounded-lg bg-muted/40 border border-border/40 mt-2">
-          {([['hooks', 'Swipe file', List], ['stats', 'Stats', BarChart3], ['trends', 'Trends', TrendingUp]] as const).map(([v, label, Icon]) => (
-            <button
-              key={v}
-              onClick={() => setView(v)}
-              className={`flex-1 h-7 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${view === v ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60' : 'text-muted-foreground hover:text-foreground'}`}
-            >
-              <Icon className="w-3.5 h-3.5" /> {label}
-            </button>
-          ))}
-        </div>
+        {/* Sticky controls: view tabs + (hooks) search/filters */}
+        <div className="px-5 pt-3 pb-3.5 space-y-3 border-b border-border/50 shrink-0">
+          <div className="flex p-0.5 gap-0.5 rounded-lg bg-muted/40 border border-border/40">
+            {([['hooks', 'Swipe file', List], ['stats', 'Stats', BarChart3], ['trends', 'Trends', TrendingUp]] as const).map(([v, label, Icon]) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`flex-1 h-7 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-colors ${view === v ? 'bg-background text-foreground shadow-sm ring-1 ring-border/60' : 'text-muted-foreground hover:text-foreground'}`}
+              >
+                <Icon className="w-3.5 h-3.5" /> {label}
+              </button>
+            ))}
+          </div>
 
-        {/* ---------- HOOKS ---------- */}
-        {view === 'hooks' && (
-          <>
-            <div className="space-y-2.5 mt-2.5">
+          {view === 'hooks' && (
+            <>
               <div className="flex gap-2">
                 <div className="relative flex-1">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
@@ -170,7 +173,7 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
                 </div>
                 <button
                   onClick={() => setUnique((u) => !u)}
-                  className={`h-8 px-2.5 rounded-md text-xs border flex items-center gap-1.5 transition-colors ${unique ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}
+                  className={`h-8 px-2.5 rounded-md text-xs border flex items-center gap-1.5 transition-colors shrink-0 ${unique ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}
                   title="Collapse identical hooks"
                 >
                   <Layers className="w-3.5 h-3.5" /> Unique
@@ -202,53 +205,56 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
                   <Download className="w-3.5 h-3.5 mr-1" /> Export CSV
                 </Button>
               </div>
-            </div>
+            </>
+          )}
+        </div>
 
-            <ScrollArea className="flex-1 mt-3 -mr-4 pr-4">
-              <div className="space-y-2 pb-4">
-                {list.map((r, i) => (
-                  <div key={r.id + i} className="group rounded-lg border bg-card hover:bg-muted/50 transition-colors p-3">
-                    <div className="flex items-start gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex flex-wrap items-center gap-1.5 mb-1">
-                          {r.angles.map((a) => <AngleBadge key={a} angle={a} />)}
-                          {r.count > 1 && <span className="text-[10px] text-primary font-semibold">×{r.count}</span>}
-                        </div>
-                        <p className="text-sm leading-relaxed">{r.hook}</p>
-                        {r.headline && <p className="text-xs text-muted-foreground mt-1 truncate">📰 {r.headline}</p>}
-                        <div className="flex items-center gap-2 mt-1.5 text-[11px] text-muted-foreground">
-                          <span className="truncate max-w-[160px]">{r.advertiser}</span>
-                          {r.cta && <Badge variant="outline" className="h-4 px-1.5 text-[10px]">{r.cta}</Badge>}
-                          {r.daysRunning != null && <span>{r.daysRunning}d</span>}
-                        </div>
+        {/* ---------- HOOKS ---------- */}
+        {view === 'hooks' && (
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="px-5 py-4 space-y-2.5">
+              {list.map((r, i) => (
+                <div key={r.id + i} className="group rounded-lg border bg-card hover:bg-muted/50 transition-colors p-3.5">
+                  <div className="flex items-start gap-2.5">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                        {r.angles.map((a) => <AngleBadge key={a} angle={a} />)}
+                        {r.count > 1 && <span className="text-[10px] text-primary font-semibold">×{r.count}</span>}
                       </div>
-                      <div className="flex flex-col gap-1 shrink-0">
-                        <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => copy(r.id + i, r.hook)} title="Copy hook">
-                          {copied === r.id + i ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                        </Button>
-                        {onSelectAd && (
-                          <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onSelectAd(r.id)} title="View ad">
-                            <ArrowRight className="w-3.5 h-3.5" />
-                          </Button>
-                        )}
+                      <p className="text-sm leading-relaxed">{r.hook}</p>
+                      {r.headline && <p className="text-xs text-muted-foreground mt-1.5 truncate">📰 {r.headline}</p>}
+                      <div className="flex items-center gap-2 mt-2 text-[11px] text-muted-foreground">
+                        <span className="truncate max-w-[160px]">{r.advertiser}</span>
+                        {r.cta && <Badge variant="outline" className="h-4 px-1.5 text-[10px]">{r.cta}</Badge>}
+                        {r.daysRunning != null && <span>{r.daysRunning}d</span>}
                       </div>
                     </div>
+                    <div className="flex flex-col gap-1 shrink-0">
+                      <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => copy(r.id + i, r.hook)} title="Copy hook">
+                        {copied === r.id + i ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      </Button>
+                      {onSelectAd && (
+                        <Button size="icon" variant="ghost" className="h-7 w-7 opacity-0 group-hover:opacity-100" onClick={() => onSelectAd(r.id)} title="View ad">
+                          <ArrowRight className="w-3.5 h-3.5" />
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                ))}
-                {list.length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    {records.length === 0 ? 'No ads with copy loaded yet' : 'No hooks match your filters'}
-                  </p>
-                )}
-              </div>
-            </ScrollArea>
-          </>
+                </div>
+              ))}
+              {list.length === 0 && (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  {records.length === 0 ? 'No ads with copy loaded yet' : 'No hooks match your filters'}
+                </p>
+              )}
+            </div>
+          </ScrollArea>
         )}
 
         {/* ---------- STATS ---------- */}
         {view === 'stats' && (
-          <ScrollArea className="flex-1 mt-3 -mr-4 pr-4">
-            <div className="space-y-5 pb-6">
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="px-5 py-4 space-y-6">
               <div className="grid grid-cols-3 gap-2">
                 {[['Hooks', stats.total], ['Unique', stats.unique], ['Avg chars', stats.avgLen]].map(([l, v]) => (
                   <div key={l} className="border border-border/60 rounded-lg p-2.5 text-center">
@@ -311,8 +317,8 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
 
         {/* ---------- TRENDS ---------- */}
         {view === 'trends' && (
-          <ScrollArea className="flex-1 mt-3 -mr-4 pr-4">
-            <div className="space-y-5 pb-6">
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="px-5 py-4 space-y-6">
               <p className="text-[11px] text-muted-foreground">
                 Angle share in the latest week vs the week before, across every ad in your database (by start date).
               </p>

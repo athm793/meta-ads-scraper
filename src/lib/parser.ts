@@ -199,9 +199,16 @@ function bodyText(v: unknown): string {
   return '';
 }
 
+// Dynamic/catalog ads carry Meta template tokens like {{product.brand}} that are
+// filled at delivery from a product feed. A body that is ONLY such tokens isn't
+// real copy — drop it so it doesn't show as a blank "{{product.brand}}" variant.
+export function isPlaceholderOnly(s: string): boolean {
+  return s.replace(/\{\{[^}]*\}\}/g, '').trim().length === 0;
+}
+
 function extractBodies(node: Record<string, unknown>): string[] {
   // ad_creative_bodies is the standard field from GraphQL API responses
-  const direct = toStringArray(node.ad_creative_bodies);
+  const direct = toStringArray(node.ad_creative_bodies).filter((b) => b && !isPlaceholderOnly(b));
   if (direct.length > 0) return direct;
 
   // In SSR HTML responses, body text lives inside snapshot
@@ -222,7 +229,7 @@ function extractBodies(node: Record<string, unknown>): string[] {
   const cards = snapshot.cards as Array<Record<string, unknown>> | undefined;
   cards?.forEach((c) => { const t = bodyText(c.body); if (t) bodies.push(t); });
 
-  return [...new Set(bodies.filter(Boolean))];
+  return [...new Set(bodies.filter((b) => b && !isPlaceholderOnly(b)))];
 }
 
 export function parseAdNode(node: Record<string, unknown>, jobId?: string): Ad {

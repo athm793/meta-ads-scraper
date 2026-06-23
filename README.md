@@ -2,8 +2,10 @@
 
 A local, self-hosted tool for searching and analyzing the **public [Meta Ad Library](https://www.facebook.com/ads/library/)** — Facebook & Instagram ads — as a competitive-research and creative swipe-file workbench.
 
-> **No API key. No access token. No account. No cost.**
-> It drives a real headless browser (Playwright) against the public Ad Library, reads the same data the website does, and stores everything in a local SQLite file on your machine. Nothing is sent anywhere. It's completely free.
+> **Proprietary software — see [License](#license). All rights reserved.**
+
+> **No API key. No access token. No account.**
+> It drives a real headless browser (Playwright) against the public Ad Library, reads the same data the website does, and stores everything in a local SQLite file on your machine. Nothing leaves your computer.
 
 ---
 
@@ -17,17 +19,21 @@ The Meta Ad Library is public but painful to research at scale: no bulk export, 
 
 ### 🔎 Search
 - **Keyword** search (matches ad copy) and **advertiser / page** search.
-- **Deep search** — scrapes an advertiser's full library sorted by impressions, and pulls the "See ad details" data for every ad.
+- **Advertiser typeahead** — start typing a brand and pick the matching Meta page from a live dropdown (logo, verified badge, category, follower count), then scrape that exact page's ads instead of a fuzzy keyword match.
+- **Deep search is always on** — every search scrapes the advertiser's full library sorted by impressions and pulls the "See ad details" data for every ad. No toggle to forget.
 - Pre-scrape filters: country, language, category (incl. political/issue, housing, employment, credit), media type, platform, status (active/inactive), date range, and result cap.
-- **Live streaming results** — ads appear as they're found (server-sent events), with a stop button.
+- **Persistent filters** — your filter and option choices are remembered between runs (and the active tab and last job survive a refresh).
+- **Live streaming results** — ads appear as they're found (server-sent events), with a stop button right next to Start.
+- A **collapsible filter rail** you can close for more room and reopen from the left edge.
 - Post-scrape result filters: free-text, status, and multi-select media type / platform.
-- Centered pagination.
+- Centered pagination on both search and job views.
 
 ### 🖼️ Ad detail view
-- Creative viewer for **image, video, carousel, and multi-video** ads (with download).
+- Wide creative viewer for **image, video, carousel, and multi-video** ads, with **per-file download buttons** (named by advertiser + ad ID; multi-asset ads download as a zip).
 - All **copy variants**, headline, CTA, and landing URL (one-click copy).
+- **Dynamic / catalog ads handled** — Meta product-feed ads carry template tokens like `{{product.brand}}` that are filled per-viewer at delivery. Variants that are only tokens are recognised as having no real copy instead of being shown as blank `{{product.brand}}` text.
 - Full metadata: status, platforms, days running, start/stop dates, spend & impression ranges (where Meta provides them), funding entity.
-- **"See ad details" / EU transparency capture** (deep search): total EU reach, beneficiary, payer, plus **age/gender** and **per-country reach** breakdowns, charted.
+- **"See ad details" / EU transparency capture**: total EU reach, beneficiary, payer, plus **age/gender** and **per-country reach** breakdowns, charted in readable colors.
 - **Per-ad export** (CSV) and **per-ad tagging** right from the modal.
 
 ### 🏷️ Saved ads, lists & tags
@@ -48,12 +54,13 @@ A swipe-file and analytics workbench built from the opening line of every ad:
 
 ### 🏢 Bulk Company Intelligence
 Check the Meta ad activity of a whole list of companies at once:
-- Upload a **CSV** (with automatic column mapping) or paste a list — **deduplicated** on import.
+- Upload a **CSV** (with automatic column mapping) or paste a list — **deduplicated** on import, with a compact summary instead of re-dumping the whole file.
+- **Brand-page matching, not just keyword** — for each company the scraper resolves the actual Meta advertiser page. Supply a **country** to look up the brand in and an optional **company type / category** column so it picks the *right* page when several brands share a name, instead of grabbing the first match.
 - Scrapes companies **in parallel** with a configurable **1–20 workers** (your setting is remembered between runs).
-- Per-company results: active/inactive ad counts, ad types, platforms, spend range, last-ad date.
+- Per-company results: matched page name, active/inactive ad counts, ad types, platforms, spend range, last-ad date.
 - **Shared deduplication** across companies.
 - **Scope filters** per job: status, media types, platforms, and optional "fetch ad details".
-- Full **job control** — pause, resume, stop, archive, and delete — from both the job list and inside a job.
+- Full **job control** — pause, resume, stop, archive, and delete — from both the job list and inside a job, with live status updates.
 - Job history with live progress, and exports for **company summaries** and **per-ad data (with details)**.
 
 ### 📤 Exports
@@ -69,7 +76,7 @@ All scraped ads, collections, tags, and jobs live in a local **SQLite** database
 
 Meta's official Ad Library API requires approval and is heavily restricted. This tool sidesteps that entirely: it launches a **stealth headless Chromium** via [Playwright](https://playwright.dev/), loads the **public** Ad Library web pages, and reads the JSON the site already sends to your browser. For deep "ad details," it replays the page's own GraphQL request from inside the browser context.
 
-That means: no API keys, no tokens, no rate-limit plans, no fees — just the public data, on your machine.
+That means no API keys, no tokens, and no approval process — just the public data, read on your own machine.
 
 ---
 
@@ -151,4 +158,4 @@ src/
 
 ## License
 
-MIT — free to use, modify, and distribute.
+**Proprietary — © 2026 athm793. All rights reserved.** See [LICENSE](LICENSE). This source is private and confidential; no copying, distribution, or use is permitted without prior written consent.

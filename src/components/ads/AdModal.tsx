@@ -37,6 +37,9 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
   if (!ad) return null;
 
   const mediaCount = adMediaUrls(ad).length;
+  // Drop dynamic/catalog variants that are only Meta template tokens like {{product.brand}}
+  // (filled at delivery from a product feed) — they aren't real copy. Cleans up ads already in the DB.
+  const copyVariants = ad.body_variants.filter((b) => b.replace(/\{\{[^}]*\}\}/g, '').trim().length > 0);
   async function handleDownloadMedia() {
     if (!ad) return;
     setDlMedia(true);
@@ -224,12 +227,12 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
 
             {/* Copy */}
             <TabsContent value="copy" className="p-6 mt-0 space-y-4">
-              {ad.body_variants.length === 0 && (
+              {copyVariants.length === 0 && (
                 <p className="text-sm text-muted-foreground">No copy available</p>
               )}
-              {ad.body_variants.map((body, i) => (
+              {copyVariants.map((body, i) => (
                 <div key={i} className="space-y-1">
-                  {ad.body_variants.length > 1 && (
+                  {copyVariants.length > 1 && (
                     <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Variant {i + 1}</p>
                   )}
                   <div className="relative group bg-muted/50 border border-border/50 rounded-lg p-4 text-sm whitespace-pre-wrap leading-relaxed">
