@@ -1,16 +1,19 @@
 import { NextResponse } from 'next/server';
 import { getBulkJobCompanies, getAdsByBulkJob, getBulkJob } from '@/lib/db';
 import { adsToCsv, exportFilename, BOM } from '@/lib/exportCsv';
+import { companyResultsUrl } from '@/lib/adLibraryUrl';
 import type { BulkCompany } from '@/types/ads';
 
 const HEADER = [
-  'Company Name', 'Status', 'Active Ads', 'Inactive Ads', 'Total Ads',
+  'Company Name', 'Matched Page', 'Ad Library URL', 'Status', 'Active Ads', 'Inactive Ads', 'Total Ads',
   'Ad Types', 'Platforms', 'Spend Range', 'Last Ad Date', 'Scraped At',
 ].map((h) => `"${h}"`).join(',');
 
 function toRow(c: BulkCompany): string {
   const fields = [
     c.company_name,
+    c.matched_name || (c.matched_page_id ? '' : 'keyword search'),
+    companyResultsUrl({ matched_page_id: c.matched_page_id, company_name: c.company_name }),
     c.status,
     String(c.active_ads_count),
     String(c.inactive_ads_count),

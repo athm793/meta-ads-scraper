@@ -111,6 +111,9 @@ export function AdCard({ ad, index = 0, onClick, onSave }: AdCardProps) {
   const body = ad.body_variants[0] || '';
   const truncatedBody = body.length > 100 ? body.slice(0, 100) + '…' : body;
   const mediaCount = adMediaUrls(ad).length;
+  // Removed/taken-down ads keep their record but lose all content.
+  const isUnavailable =
+    mediaCount === 0 && !ad.video_urls?.[0] && !body && !ad.headline && ad.carousel_cards.length === 0;
 
   async function handleSave(e: React.MouseEvent) {
     e.stopPropagation();
@@ -162,6 +165,11 @@ export function AdCard({ ad, index = 0, onClick, onSave }: AdCardProps) {
                 <span className="text-[10px] text-muted-foreground">
                   {ad.days_running}d running
                 </span>
+              )}
+              {isUnavailable && (
+                <Badge className="text-[10px] px-1.5 py-0 h-4 bg-amber-500/15 text-amber-400 border-amber-500/20">
+                  Unavailable
+                </Badge>
               )}
             </div>
           </div>

@@ -5,9 +5,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { AdCard } from './AdCard';
 import type { BulkCompany, Ad } from '@/types/ads';
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ExternalLink } from 'lucide-react';
+import { companyResultsUrl } from '@/lib/adLibraryUrl';
 
 interface CompanyDrawerProps {
   company: BulkCompany | null;
@@ -30,24 +32,31 @@ function AdSkeleton() {
 }
 
 export function CompanyDrawer({ company, open, onClose, onAdClick }: CompanyDrawerProps) {
-  const [ads, setAds] = useState<Ad[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!company || !open) return;
-    setAds([]);
-    setLoading(true);
-    fetch(`/api/ads?job_id=${company.id}&limit=50`)
-      .then((r) => r.json())
-      .then((data) => setAds(data.ads || []))
-      .finally(() => setLoading(false));
-  }, [company, open]);
+  const { data: ads = [], isLoading } = useQuery<Ad[]>({
+    queryKey: ['bulk-company-ads', company?.id],
+    queryFn: () => fetch(`/api/ads?job_id=${company!.id}&limit=50`).then((r) => r.json()).then((d) => d.ads || []),
+    enabled: !!company && open,
+  });
+  const loading = isLoading && !!company && open;
 
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-[560px] max-w-full p-0 flex flex-col">
         <SheetHeader className="px-6 pt-6 pb-4 border-b border-border/50 shrink-0">
           <SheetTitle className="text-base">{company?.company_name}</SheetTitle>
+          {company && (
+            <a
+              href={companyResultsUrl({ matched_page_id: company.matched_page_id, company_name: company.company_name })}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs text-primary/80 hover:text-primary transition-colors mt-0.5 w-fit"
+            >
+              <ExternalLink className="w-3 h-3 shrink-0" />
+              {company.matched_page_id
+                ? `Open ${company.matched_name || 'matched page'} on Meta`
+                : 'Open keyword search on Meta'}
+            </a>
+          )}
           {company && (
             <div className="flex gap-2 flex-wrap mt-1">
               <Badge variant="secondary" className="text-xs">
@@ -65,7 +74,7 @@ export function CompanyDrawer({ company, open, onClose, onAdClick }: CompanyDraw
           )}
         </SheetHeader>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-4">
             {loading ? (
               <div className="grid grid-cols-1 gap-4">

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { Ad } from '@/types/ads';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
-import { Download, ExternalLink, Copy, ChevronLeft, ChevronRight, MapPin, Users, Target, ImageDown, Loader2 } from 'lucide-react';
+import { Download, ExternalLink, Copy, ChevronLeft, ChevronRight, MapPin, Users, Target, ImageDown, Loader2, AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { format } from 'date-fns';
@@ -40,6 +40,15 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
   // Drop dynamic/catalog variants that are only Meta template tokens like {{product.brand}}
   // (filled at delivery from a product feed) — they aren't real copy. Cleans up ads already in the DB.
   const copyVariants = ad.body_variants.filter((b) => b.replace(/\{\{[^}]*\}\}/g, '').trim().length > 0);
+  // An ad with no creative, no copy, no headline and no carousel was almost
+  // certainly removed/taken down by Meta after we scraped it — the library keeps
+  // the record but strips the content. Flag it so the user isn't left guessing.
+  const isUnavailable =
+    mediaCount === 0 &&
+    !ad.video_urls?.[0] &&
+    copyVariants.length === 0 &&
+    !ad.headline &&
+    ad.carousel_cards.length === 0;
   async function handleDownloadMedia() {
     if (!ad) return;
     setDlMedia(true);
@@ -115,6 +124,18 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
             </div>
           </div>
         </DialogHeader>
+
+        {isUnavailable && (
+          <div className="mx-5 sm:mx-6 mt-3 flex items-start gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3.5 py-3 text-sm">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+            <div className="text-amber-200/90">
+              <p className="font-medium">This ad&apos;s content is no longer available</p>
+              <p className="text-amber-300/70 mt-0.5">
+                Meta still lists this ad but has stripped its creative and copy. It was likely removed or taken down after it was scraped. The metadata below is what remains.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="px-5 sm:px-6 pt-3">
           <TagEditor adId={ad.id} />

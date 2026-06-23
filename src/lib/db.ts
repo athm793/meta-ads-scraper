@@ -161,6 +161,7 @@ function initSchema(db: Database.Database) {
   const companyCols = (db.pragma('table_info(bulk_job_companies)') as { name: string }[]).map((c) => c.name);
   if (!companyCols.includes('category')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN category TEXT`);
   if (!companyCols.includes('matched_name')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN matched_name TEXT`);
+  if (!companyCols.includes('matched_page_id')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN matched_page_id TEXT`);
 }
 
 export function upsertAd(ad: Ad) {
@@ -477,7 +478,7 @@ export function getScrapeJobs(): ScrapeJob[] {
 // Bulk jobs
 export function createBulkJob(
   name: string,
-  companies: Array<{ company_name: string; website?: string; category?: string }>,
+  companies: Array<{ company_name: string; website?: string; category?: string; page_id?: string }>,
   filters?: AdScopeFilters
 ): BulkJob {
   const db = getDb();
@@ -487,10 +488,12 @@ export function createBulkJob(
     id, name, created_at, 'queued', companies.length, JSON.stringify(filters ?? {})
   );
   const insertCompany = db.prepare(
-    'INSERT INTO bulk_job_companies (id, job_id, company_name, website, category, status) VALUES (?, ?, ?, ?, ?, ?)'
+    'INSERT INTO bulk_job_companies (id, job_id, company_name, website, category, matched_page_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
   );
   for (const c of companies) {
-    insertCompany.run(crypto.randomUUID(), id, c.company_name, c.website ?? null, c.category ?? null, 'pending');
+    // A user-supplied page URL/ID is stored up front so the scraper skips the
+    // fuzzy typeahead match entirely and scrapes the exact page.
+    insertCompany.run(crypto.randomUUID(), id, c.company_name, c.website ?? null, c.category ?? null, c.page_id ?? null, 'pending');
   }
   return { id, name, created_at, status: 'queued', total_companies: companies.length, completed_companies: 0, filters: filters ?? {} };
 }
@@ -554,6 +557,7 @@ export function updateBulkCompany(id: string, data: Partial<BulkCompany>) {
       spend_range = COALESCE(@spend_range, spend_range),
       last_ad_date = COALESCE(@last_ad_date, last_ad_date),
       matched_name = COALESCE(@matched_name, matched_name),
+      matched_page_id = COALESCE(@matched_page_id, matched_page_id),
       scraped_at = COALESCE(@scraped_at, scraped_at)
     WHERE id = @id
   `).run({
@@ -566,6 +570,7 @@ export function updateBulkCompany(id: string, data: Partial<BulkCompany>) {
     spend_range: data.spend_range ?? null,
     last_ad_date: data.last_ad_date ?? null,
     matched_name: data.matched_name ?? null,
+    matched_page_id: data.matched_page_id ?? null,
     scraped_at: data.scraped_at ?? null,
   });
 }

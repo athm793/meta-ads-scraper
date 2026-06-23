@@ -12,26 +12,59 @@ import type { Ad, BulkCompany, MediaType, Platform, SearchParams, AdvertiserSugg
 export const dynamic = 'force-dynamic';
 export const maxDuration = 600;
 
-// Pick the advertiser page that best matches a company. Scores by: exact name
-// match, then category match (if the upload provided one), then verified badge,
-// then follower count. This avoids blindly taking the first lookalike.
+const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Generic tokens that don't identify a brand — ignored when comparing names so
+// "Bricklayer AI" matches on "bricklayer", not on the throwaway "ai".
+const STOPWORDS = new Set([
+  'inc', 'llc', 'ltd', 'co', 'corp', 'company', 'group', 'global', 'the', 'a', 'an',
+  'ai', 'app', 'io', 'com', 'official', 'hq', 'team', 'studio', 'labs', 'technologies', 'tech',
+]);
+
+// 0..1 score of how well a candidate advertiser name matches the target company
+// name — purely on the words, never on popularity. This is the gate that stops
+// the scraper from grabbing a popular unrelated page (e.g. CafeDrama for a
+// "Bricklayer AI" search) just because it showed up in Meta's fuzzy typeahead.
+function nameMatchScore(target: string, candidate: string): number {
+  const nt = norm(target);
+  const nc = norm(candidate);
+  if (!nt || !nc) return 0;
+  if (nt === nc) return 1;
+
+  const tokens = target.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 2 && !STOPWORDS.has(t));
+  if (tokens.length === 0) {
+    // Name is all generic/short — only accept a strong containment match.
+    return nc.includes(nt) || nt.includes(nc) ? 0.6 : 0;
+  }
+  const matched = tokens.filter((t) => nc.includes(t)).length;
+  const ratio = matched / tokens.length;
+  if (nc.includes(nt) || nt.includes(nc)) return Math.max(ratio, 0.85);
+  return ratio;
+}
+
+// Minimum name overlap required to accept a page. Below this we'd rather return
+// nothing (and fall back to a keyword search) than scrape the wrong brand.
+const MIN_NAME_MATCH = 0.6;
+
+// Pick the advertiser page that best matches a company. A real name match is
+// mandatory; category / verified / followers only break ties between pages that
+// already match the name. Returns null when nothing genuinely matches.
 function pickBestMatch(matches: AdvertiserSuggestion[], name: string, category?: string): AdvertiserSuggestion | null {
   if (matches.length === 0) return null;
-  const norm = (s: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const target = norm(name);
   const cat = norm(category || '');
   const scored = matches.map((m, i) => {
-    let score = 0;
-    if (norm(m.name) === target) score += 1000;            // exact name
-    else if (norm(m.name).includes(target) || target.includes(norm(m.name))) score += 200;
-    if (cat && norm(m.category || '').includes(cat)) score += 400;  // category match
-    if (m.verified) score += 100;                          // official/verified
-    score += Math.min(50, Math.log10((m.likes || m.ig_followers || 0) + 1) * 5); // popularity
-    score -= i * 0.1;                                       // tiny preference for relevance order
-    return { m, score };
+    const nm = nameMatchScore(name, m.name);
+    let score = nm * 1000;
+    if (cat && norm(m.category || '').includes(cat)) score += 200; // tiebreaker only
+    if (m.verified) score += 40;
+    score += Math.min(30, Math.log10((m.likes || m.ig_followers || 0) + 1) * 4);
+    score -= i * 0.1;
+    return { m, score, nm };
   });
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0].m;
+  const eligible = scored.filter((s) => s.nm >= MIN_NAME_MATCH);
+  if (eligible.length === 0) return null;
+  eligible.sort((a, b) => b.score - a.score);
+  return eligible[0].m;
 }
 
 // Conservative default — 20 parallel headless browsers from one IP is the
@@ -89,10 +122,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
               fetch_details: f.fetch_details,
             };
 
-            // Brand-page mode: resolve the company to its actual advertiser page
-            // and scrape that page's full library. Falls back to a keyword search
-            // when no matching page is found.
-            if (f.match_pages) {
+            // Exact-page override: if the upload supplied a page URL/ID for this
+            // company, scrape that page directly — no fuzzy matching.
+            if (company.matched_page_id) {
+              scrapeParams.page_id = company.matched_page_id;
+            } else if (f.match_pages) {
+              // Brand-page mode: resolve the company to its actual advertiser page
+              // and scrape that page's full library. Falls back to a keyword search
+              // when no page genuinely matches the name.
               let page: AdvertiserSuggestion | null = null;
               try {
                 const lookupCountry = f.country && f.country !== 'ALL' ? f.country : 'US';
@@ -104,7 +141,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
               } catch { /* fall back */ }
               if (page) {
                 scrapeParams.page_id = page.page_id;
-                updateBulkCompany(company.id, { matched_name: page.name });
+                updateBulkCompany(company.id, { matched_name: page.name, matched_page_id: page.page_id });
               } else {
                 scrapeParams.advertiser = company.company_name;
               }

@@ -158,6 +158,7 @@ export interface BulkCompany {
   website?: string;
   category?: string;       // expected brand category from the upload (helps disambiguate matches)
   matched_name?: string;   // the advertiser page actually matched + scraped
+  matched_page_id?: string; // resolved Meta page id (from a user-supplied URL/ID or typeahead match)
   status: BulkCompanyStatus;
   active_ads_count: number;
   inactive_ads_count: number;

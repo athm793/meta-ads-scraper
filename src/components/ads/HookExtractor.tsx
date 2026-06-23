@@ -320,7 +320,7 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
           <ScrollArea className="flex-1 min-h-0">
             <div className="px-5 py-4 space-y-6">
               <p className="text-[11px] text-muted-foreground">
-                Angle share in the latest week vs the week before, across every ad in your database (by start date).
+                Which hook angles are trending up or down — comparing the most recent week of scraped ads to the week before, grouped by each ad&apos;s launch date.
               </p>
               {!trends || trends.periods.length < 2 ? (
                 <p className="text-sm text-muted-foreground text-center py-8">

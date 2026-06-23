@@ -19,6 +19,7 @@ import Papa from 'papaparse';
 import type { BulkJob, MediaType, Platform } from '@/types/ads';
 import { formatDistanceToNow } from 'date-fns';
 import { CountryCombobox } from './CountryCombobox';
+import { extractPageId } from '@/lib/adLibraryUrl';
 
 const MEDIA_OPTS: { value: MediaType; label: string }[] = [
   { value: 'image', label: 'Image' },
@@ -55,7 +56,7 @@ const ACTIVE_STATUSES = new Set(['running', 'queued', 'paused']);
 
 const NO_COLUMN = '__none__';
 
-type CompanyRow = { company_name: string; website?: string; category?: string };
+type CompanyRow = { company_name: string; website?: string; category?: string; page_id?: string };
 
 // Case-insensitive dedup by company name; returns kept rows + how many dropped.
 function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: number } {
@@ -68,7 +69,12 @@ function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: 
     const key = name.toLowerCase();
     if (seen.has(key)) { dupes++; continue; }
     seen.add(key);
-    companies.push({ company_name: name, website: c.website?.trim() || undefined, category: c.category?.trim() || undefined });
+    companies.push({
+      company_name: name,
+      website: c.website?.trim() || undefined,
+      category: c.category?.trim() || undefined,
+      page_id: c.page_id || undefined,
+    });
   }
   return { companies, dupes };
 }
@@ -274,6 +280,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [companyCol, setCompanyCol] = useState('');
   const [websiteCol, setWebsiteCol] = useState(NO_COLUMN);
   const [categoryCol, setCategoryCol] = useState(NO_COLUMN);
+  const [pageCol, setPageCol] = useState(NO_COLUMN);
   const [loading, setLoading] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [scopeStatus, setScopeStatus] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
@@ -369,12 +376,13 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
         company_name: companyCol ? (row[companyCol] ?? '') : '',
         website: websiteCol !== NO_COLUMN ? (row[websiteCol] ?? '') : undefined,
         category: categoryCol !== NO_COLUMN ? (row[categoryCol] ?? '') : undefined,
+        page_id: pageCol !== NO_COLUMN ? (extractPageId(row[pageCol] ?? '') ?? undefined) : undefined,
       }));
       return dedupeCompanies(mapped);
     }
     const lines = textInput.split('\n').map((l) => ({ company_name: l }));
     return dedupeCompanies(lines);
-  }, [fileName, rawRows, companyCol, websiteCol, categoryCol, textInput]);
+  }, [fileName, rawRows, companyCol, websiteCol, categoryCol, pageCol, textInput]);
 
   function handleTextChange(val: string) {
     setTextInput(val);
@@ -391,6 +399,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     setCompanyCol('');
     setWebsiteCol(NO_COLUMN);
     setCategoryCol(NO_COLUMN);
+    setPageCol(NO_COLUMN);
     if (fileRef.current) fileRef.current.value = '';
   }
 
@@ -415,11 +424,16 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
           guessColumn(fields, /^(category|industry|type|sector|vertical)$/i) ||
           guessColumn(fields, /(category|industry|sector|vertical)/i) ||
           NO_COLUMN;
+        const guessedPage =
+          guessColumn(fields, /^(facebook|fb|meta)?[\s_-]?(page[\s_-]?(url|id|link)|ad[\s_-]?library)$/i) ||
+          guessColumn(fields, /(page[\s_-]?id|page[\s_-]?url|facebook[\s_-]?url|fb[\s_-]?page)/i) ||
+          NO_COLUMN;
         setRawRows(results.data);
         setColumns(fields);
         setCompanyCol(guessedCompany);
         setWebsiteCol(guessedWebsite);
         setCategoryCol(guessedCategory);
+        setPageCol(guessedPage);
         setFileName(file.name);
         setTextInput('');
       },
@@ -558,8 +572,8 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                               </SelectContent>
                             </Select>
                           </div>
-                          <div className="space-y-1 col-span-2">
-                            <Label className="text-[11px] text-muted-foreground">Category / type (optional — sharpens brand matching)</Label>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Category / type (optional)</Label>
                             <Select value={categoryCol} onValueChange={(v) => v && setCategoryCol(v)}>
                               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                               <SelectContent>
@@ -568,7 +582,20 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                               </SelectContent>
                             </Select>
                           </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Page URL / ID (optional — exact match)</Label>
+                            <Select value={pageCol} onValueChange={(v) => v && setPageCol(v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
+                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
+                        <p className="text-[11px] text-muted-foreground/70 mt-2 leading-relaxed">
+                          Tip: a <span className="font-medium">Page URL / ID</span> column (paste the brand&apos;s Ad Library link) guarantees the right page — no name guessing. <span className="font-medium">Category</span> helps when several brands share a name.
+                        </p>
                       </div>
                     )}
                   </div>

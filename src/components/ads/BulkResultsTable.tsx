@@ -6,9 +6,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import type { BulkCompany, BulkJob } from '@/types/ads';
-import { Download, ChevronRight, Loader2, Play, Pause, Square, Trash2 } from 'lucide-react';
+import { Download, ChevronRight, Loader2, Play, Pause, Square, Trash2, ExternalLink } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Pagination } from './Pagination';
+import { companyResultsUrl } from '@/lib/adLibraryUrl';
 
 interface BulkResultsTableProps {
   job: BulkJob;
@@ -165,7 +166,7 @@ export function BulkResultsTable({ job, companies, onCompanyClick, onExport, onE
         <table className="w-full text-sm">
           <thead className="bg-muted/40 border-b border-border/50">
             <tr>
-              {['Company', 'Status', 'Active', 'Inactive', 'Ad Types', 'Platforms', 'Last Ad', ''].map((h) => (
+              {['Company', 'Status', 'Active', 'Inactive', 'Ad Types', 'Platforms', 'Page', 'Last Ad', ''].map((h) => (
                 <th key={h} className="text-left px-3 py-2 text-xs font-medium text-muted-foreground first:pl-4">{h}</th>
               ))}
             </tr>
@@ -208,6 +209,21 @@ export function BulkResultsTable({ job, companies, onCompanyClick, onExport, onE
                     </div>
                   </td>
                   <td className="px-3 py-2.5 text-xs text-muted-foreground">{c.platforms.join(', ') || '—'}</td>
+                  <td className="px-3 py-2.5">
+                    {(c.status === 'done' || c.status === 'not_found') ? (
+                      <a
+                        href={companyResultsUrl({ matched_page_id: c.matched_page_id, company_name: c.company_name })}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title={c.matched_page_id ? 'Open matched brand page on Meta' : 'Open keyword search on Meta'}
+                        className="inline-flex items-center gap-1 text-xs text-primary/80 hover:text-primary transition-colors"
+                      >
+                        <ExternalLink className="w-3 h-3" />
+                        {c.matched_page_id ? 'Page' : 'Search'}
+                      </a>
+                    ) : '—'}
+                  </td>
                   <td className="px-3 py-2.5 text-xs text-muted-foreground">
                     {c.last_ad_date ? formatDistanceToNow(new Date(c.last_ad_date), { addSuffix: true }) : '—'}
                   </td>
