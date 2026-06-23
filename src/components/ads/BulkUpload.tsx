@@ -1,15 +1,19 @@
 'use client';
 
-import { useState, useRef, useMemo, useEffect } from 'react';
+import { useState, useRef, useMemo, useEffect, Fragment } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Upload, Play, Pause, Square, FileText, X, History, CheckCircle2, Loader2, Clock, Columns3, Archive, ArchiveRestore, Trash2, SlidersHorizontal } from 'lucide-react';
+import {
+  Upload, Play, Pause, Square, FileText, X, History, CheckCircle2, Loader2, Clock,
+  Columns3, Archive, ArchiveRestore, Trash2, ArrowLeft, ArrowRight, Check,
+  Building2, Target, Rocket, Globe, Tag,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Papa from 'papaparse';
 import type { BulkJob, MediaType, Platform } from '@/types/ads';
@@ -160,7 +164,108 @@ function JobRow({ job, onStart, onPause, onResume, onStop, onArchive, onUnarchiv
   );
 }
 
+// ---- Wizard scaffolding ----
+
+const STEPS = [
+  { n: 1, label: 'Companies', icon: Building2 },
+  { n: 2, label: 'Targeting', icon: Target },
+  { n: 3, label: 'Run', icon: Rocket },
+] as const;
+
+function Stepper({ step, maxReached, onJump }: { step: number; maxReached: number; onJump: (n: number) => void }) {
+  return (
+    <div className="flex items-center">
+      {STEPS.map((s, i) => {
+        const done = step > s.n;
+        const active = step === s.n;
+        const reachable = s.n <= maxReached;
+        const Icon = s.icon;
+        return (
+          <Fragment key={s.n}>
+            <button
+              onClick={() => reachable && onJump(s.n)}
+              disabled={!reachable}
+              className={cn('flex items-center gap-2 shrink-0', reachable && !active ? 'cursor-pointer' : 'cursor-default')}
+            >
+              <span
+                className={cn(
+                  'flex items-center justify-center w-8 h-8 rounded-full border text-xs font-semibold transition-colors',
+                  active ? 'bg-primary text-primary-foreground border-primary'
+                    : done ? 'bg-primary/15 text-primary border-primary/40'
+                    : 'border-border text-muted-foreground'
+                )}
+              >
+                {done ? <Check className="w-4 h-4" /> : <Icon className="w-4 h-4" />}
+              </span>
+              <span className={cn('text-sm font-medium hidden sm:inline', active ? 'text-foreground' : 'text-muted-foreground')}>
+                {s.label}
+              </span>
+            </button>
+            {i < STEPS.length - 1 && (
+              <div className={cn('flex-1 h-px mx-2 sm:mx-3 transition-colors', step > s.n ? 'bg-primary/40' : 'bg-border')} />
+            )}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function CompanyPreview({ companies, dupes, onClear }: { companies: CompanyRow[]; dupes: number; onClear: () => void }) {
+  if (companies.length === 0) return null;
+  const shown = companies.slice(0, 60);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+      className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.04] overflow-hidden"
+    >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-emerald-500/15">
+        <div className="flex items-center gap-2 text-xs">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="font-semibold text-foreground tabular-nums">{companies.length.toLocaleString()}</span>
+          <span className="text-muted-foreground">{companies.length === 1 ? 'company' : 'companies'} ready to scrape</span>
+          {dupes > 0 && <span className="text-violet-400">· {dupes.toLocaleString()} duplicate{dupes === 1 ? '' : 's'} removed</span>}
+        </div>
+        <button onClick={onClear} className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs transition-colors shrink-0">
+          <X className="w-3 h-3" /> Clear
+        </button>
+      </div>
+      <div className="p-2.5 max-h-44 overflow-y-auto flex flex-wrap gap-1.5">
+        {shown.map((c, i) => (
+          <span
+            key={`${c.company_name}-${i}`}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-background border border-border/60 text-xs max-w-full"
+            title={[c.company_name, c.website, c.category].filter(Boolean).join(' · ')}
+          >
+            <span className="truncate max-w-[180px]">{c.company_name}</span>
+            {c.category && <span className="text-[10px] text-muted-foreground shrink-0">· {c.category}</span>}
+          </span>
+        ))}
+        {companies.length > shown.length && (
+          <span className="inline-flex items-center px-2 py-1 text-xs text-muted-foreground">
+            +{(companies.length - shown.length).toLocaleString()} more
+          </span>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function SummaryRow({ label, value, icon: Icon }: { label: string; value: React.ReactNode; icon: React.ElementType }) {
+  return (
+    <div className="flex items-center gap-2.5 text-sm">
+      <Icon className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+      <span className="text-muted-foreground w-28 shrink-0">{label}</span>
+      <span className="text-foreground font-medium truncate">{value}</span>
+    </div>
+  );
+}
+
 export function BulkUpload({ onStart }: BulkUploadProps) {
+  const [step, setStep] = useState(1);
+  const [maxReached, setMaxReached] = useState(1);
   const [jobName, setJobName] = useState('');
   const [textInput, setTextInput] = useState('');
   const [fileName, setFileName] = useState<string | null>(null);
@@ -191,6 +296,12 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     setWorkers(n);
     try { localStorage.setItem('mas_bulk_workers', String(n)); } catch { /* ignore */ }
   }
+
+  function goTo(n: number) {
+    setStep(n);
+    setMaxReached((m) => Math.max(m, n));
+  }
+
   const fileRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -343,6 +454,16 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     }
   }
 
+  const [stepDir, setStepDir] = useState(1);
+  function next() { setStepDir(1); goTo(Math.min(3, step + 1)); }
+  function back() { setStepDir(-1); setStep((s) => Math.max(1, s - 1)); }
+
+  const stepVariants = {
+    enter: (d: number) => ({ opacity: 0, x: d > 0 ? 24 : -24 }),
+    center: { opacity: 1, x: 0 },
+    exit: (d: number) => ({ opacity: 0, x: d > 0 ? -24 : 24 }),
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <motion.div
@@ -353,286 +474,313 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
       >
         <h2 className="text-xl font-semibold">Bulk Company Intelligence</h2>
         <p className="text-sm text-muted-foreground">
-          Upload a list of companies to check their Meta ad activity in parallel
+          Check the Meta ad activity of a whole list of companies in parallel
         </p>
       </motion.div>
 
+      {/* Wizard card */}
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ type: 'spring', stiffness: 400, damping: 30, delay: 0.05 }}
-        className="space-y-4"
+        className="rounded-xl border border-border/60 bg-card/40 overflow-hidden"
       >
-        <div className="space-y-1.5">
-          <Label>Job Name (optional)</Label>
-          <Input
-            placeholder="e.g. Prospect list June 2026"
-            value={jobName}
-            onChange={(e) => setJobName(e.target.value)}
-          />
+        <div className="px-5 py-4 border-b border-border/50">
+          <Stepper step={step} maxReached={maxReached} onJump={(n) => { setStepDir(n > step ? 1 : -1); setStep(n); }} />
         </div>
 
-        <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <Label>Company List</Label>
-            <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
-              <Upload className="w-3.5 h-3.5 mr-1" /> Upload CSV
-            </Button>
-            <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleFile} />
-          </div>
-
-          {fileName ? (
-            /* Compact card for an uploaded CSV — no giant list re-render */
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-              className="rounded-lg border border-border/50 bg-muted/30 overflow-hidden"
-            >
-              <div className="px-3 py-2.5 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-md bg-primary/15 flex items-center justify-center shrink-0">
-                  <FileText className="w-4 h-4 text-primary" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium truncate">{fileName}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    <span className="text-foreground font-medium tabular-nums">{companies.length.toLocaleString()}</span> unique companies
-                    {dupes > 0 && (
-                      <span className="text-violet-400">{' · '}{dupes.toLocaleString()} duplicate{dupes === 1 ? '' : 's'} removed</span>
-                    )}
-                    {companies.length > 0 && (
-                      <span className="text-muted-foreground/70">
-                        {' · '}{companies.slice(0, 3).map((c) => c.company_name).join(', ')}
-                        {companies.length > 3 ? `, +${(companies.length - 3).toLocaleString()} more` : ''}
-                      </span>
-                    )}
+        <div className="p-5">
+          <AnimatePresence mode="wait" custom={stepDir}>
+            {/* STEP 1 — COMPANIES */}
+            {step === 1 && (
+              <motion.div
+                key="step1"
+                custom={stepDir}
+                variants={stepVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.18 }}
+                className="space-y-4"
+              >
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold">Add your companies</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Paste one company per line, or upload a CSV. Plain names or domains both work — duplicates are removed automatically.
                   </p>
                 </div>
-                <button
-                  onClick={clearList}
-                  className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs transition-colors shrink-0"
-                >
-                  <X className="w-3.5 h-3.5" /> Clear
-                </button>
-              </div>
 
-              {/* Column mapping */}
-              {columns.length > 0 && (
-                <div className="border-t border-border/40 bg-background/40 px-3 py-2.5">
-                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-2">
-                    <Columns3 className="w-3 h-3" /> Map columns
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs">Company list</Label>
+                  <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()} className="h-7 text-xs">
+                    <Upload className="w-3.5 h-3.5 mr-1" /> Upload CSV
+                  </Button>
+                  <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleFile} />
+                </div>
+
+                {fileName ? (
+                  <div className="rounded-lg border border-border/50 bg-muted/30 overflow-hidden">
+                    <div className="px-3 py-2.5 flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-md bg-primary/15 flex items-center justify-center shrink-0">
+                        <FileText className="w-4 h-4 text-primary" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{fileName}</p>
+                        <p className="text-xs text-muted-foreground">{rawRows.length.toLocaleString()} rows parsed</p>
+                      </div>
+                      <button onClick={clearList} className="text-muted-foreground hover:text-foreground flex items-center gap-1 text-xs transition-colors shrink-0">
+                        <X className="w-3.5 h-3.5" /> Remove
+                      </button>
+                    </div>
+
+                    {columns.length > 0 && (
+                      <div className="border-t border-border/40 bg-background/40 px-3 py-2.5">
+                        <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground mb-2">
+                          <Columns3 className="w-3 h-3" /> Map columns
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Company name</Label>
+                            <Select value={companyCol} onValueChange={(v) => v && setCompanyCol(v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select column" /></SelectTrigger>
+                              <SelectContent>
+                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[11px] text-muted-foreground">Website (optional)</Label>
+                            <Select value={websiteCol} onValueChange={(v) => v && setWebsiteCol(v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
+                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-1 col-span-2">
+                            <Label className="text-[11px] text-muted-foreground">Category / type (optional — sharpens brand matching)</Label>
+                            <Select value={categoryCol} onValueChange={(v) => v && setCategoryCol(v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
+                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
+                ) : (
+                  <Textarea
+                    placeholder={'Nike\nApple\nshopify.com\nHubSpot\nNotion\n\n…one company name or domain per line'}
+                    rows={7}
+                    value={textInput}
+                    onChange={(e) => handleTextChange(e.target.value)}
+                    className="font-mono text-sm resize-none"
+                  />
+                )}
+
+                {companies.length > 0 ? (
+                  <CompanyPreview companies={companies} dupes={dupes} onClear={clearList} />
+                ) : (
+                  <p className="text-xs text-muted-foreground/70 text-center py-2">
+                    Your parsed companies will preview here as you type or upload.
+                  </p>
+                )}
+              </motion.div>
+            )}
+
+            {/* STEP 2 — TARGETING */}
+            {step === 2 && (
+              <motion.div
+                key="step2"
+                custom={stepDir}
+                variants={stepVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.18 }}
+                className="space-y-5"
+              >
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold">How should we find each company?</h3>
+                  <p className="text-xs text-muted-foreground">Controls how names resolve to advertisers and which ads count.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Match each company by</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Company name</Label>
-                      <Select value={companyCol} onValueChange={(v) => v && setCompanyCol(v)}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select column" /></SelectTrigger>
-                        <SelectContent>
-                          {columns.map((col) => (
-                            <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <Label className="text-[11px] text-muted-foreground">Website (optional)</Label>
-                      <Select value={websiteCol} onValueChange={(v) => v && setWebsiteCol(v)}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
-                          {columns.map((col) => (
-                            <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1 col-span-2">
-                      <Label className="text-[11px] text-muted-foreground">Category / type (optional — improves brand match)</Label>
-                      <Select value={categoryCol} onValueChange={(v) => v && setCategoryCol(v)}>
-                        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
-                          {columns.map((col) => (
-                            <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    <button
+                      onClick={() => setMatchPages(true)}
+                      className={cn('rounded-lg border p-3 text-left transition-colors', matchPages ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50')}
+                    >
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        <Building2 className="w-3.5 h-3.5" /> Brand page
+                        {matchPages && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">Resolves each name to its advertiser page and scrapes its full library. Most accurate.</p>
+                    </button>
+                    <button
+                      onClick={() => setMatchPages(false)}
+                      className={cn('rounded-lg border p-3 text-left transition-colors', !matchPages ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50')}
+                    >
+                      <div className="flex items-center gap-1.5 text-sm font-medium">
+                        <Target className="w-3.5 h-3.5" /> Keyword
+                        {!matchPages && <Check className="w-3.5 h-3.5 text-primary ml-auto" />}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">Keyword search of the name across all advertisers. May include lookalikes.</p>
+                    </button>
                   </div>
                 </div>
-              )}
-            </motion.div>
-          ) : (
-            <>
-              <Textarea
-                placeholder="One company name per line&#10;Nike&#10;Apple&#10;Shopify&#10;HubSpot"
-                rows={8}
-                value={textInput}
-                onChange={(e) => handleTextChange(e.target.value)}
-                className="font-mono text-sm resize-none"
-              />
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span className="flex items-center gap-2">
-                  {companies.length > 0 ? (
-                    <>
-                      <Badge variant="secondary">{companies.length.toLocaleString()} unique companies</Badge>
-                      {dupes > 0 && <span className="text-violet-400">{dupes.toLocaleString()} duplicate{dupes === 1 ? '' : 's'} removed</span>}
-                    </>
-                  ) : 'Paste company names or upload a CSV with a "company_name" column'}
-                </span>
-                {companies.length > 0 && (
-                  <button
-                    onClick={clearList}
-                    className="hover:text-foreground flex items-center gap-1 transition-colors"
-                  >
-                    <X className="w-3 h-3" /> Clear
-                  </button>
+
+                {matchPages && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Look up brands in</Label>
+                    <CountryCombobox value={matchCountry} onChange={setMatchCountry} placeholder="United States" />
+                    <p className="text-[11px] text-muted-foreground/70">
+                      Picks the right brand by market. A <span className="font-medium">category</span> column on your CSV disambiguates further.
+                    </p>
+                  </div>
                 )}
-              </div>
-            </>
-          )}
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Ad status</Label>
+                  <div className="flex gap-1.5">
+                    {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setScopeStatus(s)}
+                        className={cn('px-3 py-1.5 rounded-md text-xs border transition-colors', scopeStatus === s ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted')}
+                      >
+                        {s === 'ALL' ? 'Both' : s === 'ACTIVE' ? 'Active only' : 'Inactive only'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Media types {scopeMedia.length === 0 && <span className="text-muted-foreground/50">(all)</span>}</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {MEDIA_OPTS.map((m) => (
+                      <button
+                        key={m.value}
+                        onClick={() => setScopeMedia((prev) => toggle(prev, m.value))}
+                        className={cn('px-2.5 py-1 rounded-md text-xs border transition-colors', scopeMedia.includes(m.value) ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted')}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Platforms {scopePlatforms.length === 0 && <span className="text-muted-foreground/50">(all)</span>}</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PLATFORM_OPTS.map((p) => (
+                      <button
+                        key={p.value}
+                        onClick={() => setScopePlatforms((prev) => toggle(prev, p.value))}
+                        className={cn('px-2.5 py-1 rounded-md text-xs border transition-colors', scopePlatforms.includes(p.value) ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted')}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* STEP 3 — RUN */}
+            {step === 3 && (
+              <motion.div
+                key="step3"
+                custom={stepDir}
+                variants={stepVariants}
+                initial="enter"
+                animate="center"
+                exit="exit"
+                transition={{ duration: 0.18 }}
+                className="space-y-5"
+              >
+                <div className="space-y-1">
+                  <h3 className="text-sm font-semibold">Run settings</h3>
+                  <p className="text-xs text-muted-foreground">Name the job, tune speed, then review and launch.</p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Job name (optional)</Label>
+                  <Input placeholder="e.g. Prospect list June 2026" value={jobName} onChange={(e) => setJobName(e.target.value)} className="h-9" />
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs">Parallel workers</Label>
+                    <span className="text-xs font-semibold tabular-nums text-foreground">{workers}</span>
+                  </div>
+                  <input
+                    type="range" min={1} max={10} step={1} value={workers}
+                    onChange={(e) => changeWorkers(Number(e.target.value))}
+                    className="w-full h-1.5 accent-primary cursor-pointer"
+                  />
+                  <p className="text-[11px] text-muted-foreground/70">
+                    Companies scraped at once. Higher = faster but raises the chance Meta rate-limits you; 4–6 is the safe sweet spot. Saved for next time.
+                  </p>
+                </div>
+
+                <button onClick={() => setFetchDetails((v) => !v)} className="flex items-center gap-2 w-full text-left">
+                  <span className={cn('relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors', fetchDetails ? 'bg-primary' : 'bg-muted-foreground/30')}>
+                    <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform', fetchDetails ? 'translate-x-3.5' : 'translate-x-0.5')} />
+                  </span>
+                  <span className="text-xs">
+                    <span className="font-medium">Fetch ad details</span>
+                    <span className="text-muted-foreground"> — pull EU transparency data (reach, demographics) per ad. Slower.</span>
+                  </span>
+                </button>
+                {fetchDetails && (
+                  <p className="text-[11px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-1.5 leading-relaxed">
+                    Reach &amp; demographics only exist for advertisers running ads in the EU (EU transparency law). Non-EU advertisers return blank details — a Meta limitation, not a failed scrape.
+                  </p>
+                )}
+
+                {/* Review */}
+                <div className="rounded-lg border border-border/50 bg-muted/20 p-3.5 space-y-2.5">
+                  <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Review</p>
+                  <SummaryRow icon={Building2} label="Companies" value={`${companies.length.toLocaleString()} unique${dupes > 0 ? ` · ${dupes.toLocaleString()} dupes removed` : ''}`} />
+                  <SummaryRow icon={matchPages ? Building2 : Target} label="Match by" value={matchPages ? 'Brand page' : 'Keyword'} />
+                  {matchPages && <SummaryRow icon={Globe} label="Look up in" value={matchCountry} />}
+                  <SummaryRow icon={Target} label="Scope" value={`${scopeStatus === 'ALL' ? 'Active + inactive' : scopeStatus === 'ACTIVE' ? 'Active only' : 'Inactive only'} · ${scopeMedia.length ? scopeMedia.length + ' media' : 'all media'} · ${scopePlatforms.length ? scopePlatforms.length + ' platforms' : 'all platforms'}`} />
+                  <SummaryRow icon={Rocket} label="Speed" value={`${workers} parallel ${workers === 1 ? 'worker' : 'workers'}`} />
+                  <SummaryRow icon={Tag} label="Ad details" value={fetchDetails ? 'Fetched per ad' : 'Skipped (faster)'} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* Search scope */}
-        <div className="rounded-lg border border-border/50 bg-muted/20 p-3 space-y-3">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wide">
-            <SlidersHorizontal className="w-3 h-3" /> Search scope
-          </div>
+        {/* Footer nav */}
+        <div className="px-5 py-3.5 border-t border-border/50 flex items-center justify-between gap-3">
+          {step > 1 ? (
+            <Button variant="ghost" size="sm" onClick={back} className="text-muted-foreground">
+              <ArrowLeft className="w-4 h-4 mr-1" /> Back
+            </Button>
+          ) : <span />}
 
-          {/* Match mode */}
-          <div className="space-y-1.5">
-            <Label className="text-[11px] text-muted-foreground">Match each company by</Label>
-            <div className="flex gap-1.5">
-              <button
-                onClick={() => setMatchPages(true)}
-                className={`flex-1 px-2.5 py-1.5 rounded-md text-xs border transition-colors ${matchPages ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
-              >
-                Brand page
-              </button>
-              <button
-                onClick={() => setMatchPages(false)}
-                className={`flex-1 px-2.5 py-1.5 rounded-md text-xs border transition-colors ${!matchPages ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
-              >
-                Keyword
-              </button>
-            </div>
-            <p className="text-[11px] text-muted-foreground/70">
-              {matchPages
-                ? 'Resolves each name to its advertiser page and scrapes that page’s full library (most accurate). Falls back to keyword if no page is found.'
-                : 'Keyword search of the name across all advertisers (may include lookalikes).'}
-            </p>
-          </div>
-
-          {/* Brand-lookup country — disambiguates same-name brands by market */}
-          {matchPages && (
-            <div className="space-y-1.5">
-              <Label className="text-[11px] text-muted-foreground">Look up brands in</Label>
-              <CountryCombobox value={matchCountry} onChange={setMatchCountry} placeholder="United States" />
-              <p className="text-[11px] text-muted-foreground/70">
-                Picks the right brand by market. Add a <span className="font-medium">category</span> column to your CSV to disambiguate further.
-              </p>
-            </div>
-          )}
-
-          <div className="space-y-1.5">
-            <Label className="text-[11px] text-muted-foreground">Status</Label>
-            <div className="flex gap-1.5">
-              {(['ALL', 'ACTIVE', 'INACTIVE'] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => setScopeStatus(s)}
-                  className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${scopeStatus === s ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
-                >
-                  {s === 'ALL' ? 'Both' : s === 'ACTIVE' ? 'Active' : 'Inactive'}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-[11px] text-muted-foreground">Media types {scopeMedia.length === 0 && <span className="text-muted-foreground/50">(all)</span>}</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {MEDIA_OPTS.map((m) => (
-                <button
-                  key={m.value}
-                  onClick={() => setScopeMedia((prev) => toggle(prev, m.value))}
-                  className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${scopeMedia.includes(m.value) ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-[11px] text-muted-foreground">Platforms {scopePlatforms.length === 0 && <span className="text-muted-foreground/50">(all)</span>}</Label>
-            <div className="flex flex-wrap gap-1.5">
-              {PLATFORM_OPTS.map((p) => (
-                <button
-                  key={p.value}
-                  onClick={() => setScopePlatforms((prev) => toggle(prev, p.value))}
-                  className={`px-2.5 py-1 rounded-md text-xs border transition-colors ${scopePlatforms.includes(p.value) ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-muted'}`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between">
-              <Label className="text-[11px] text-muted-foreground">Parallel workers</Label>
-              <span className="text-xs font-semibold tabular-nums text-foreground">{workers}</span>
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={10}
-              step={1}
-              value={workers}
-              onChange={(e) => changeWorkers(Number(e.target.value))}
-              className="w-full h-1.5 accent-primary cursor-pointer"
-            />
-            <p className="text-[11px] text-muted-foreground/70">
-              Companies scraped at once. Higher = faster but raises the chance Meta rate-limits you; 4–6 is a safe sweet spot. Saved for next time.
-            </p>
-          </div>
-
-          <button
-            onClick={() => setFetchDetails((v) => !v)}
-            className="flex items-center gap-2 w-full text-left pt-1"
-          >
-            <span className={`relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors ${fetchDetails ? 'bg-primary' : 'bg-muted-foreground/30'}`}>
-              <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform ${fetchDetails ? 'translate-x-3.5' : 'translate-x-0.5'}`} />
-            </span>
-            <span className="text-xs">
-              <span className="font-medium">Fetch ad details</span>
-              <span className="text-muted-foreground"> — pull EU transparency data (reach, demographics) per ad. Slower.</span>
-            </span>
-          </button>
-          {fetchDetails && (
-            <p className="text-[11px] text-amber-400/90 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-1.5 leading-relaxed">
-              Reach &amp; demographics only exist for advertisers running ads in the EU (EU transparency law). Non-EU advertisers will return blank details — that&apos;s a Meta limitation, not a failed scrape.
-            </p>
-          )}
-        </div>
-
-        <Button
-          onClick={handleStart}
-          disabled={companies.length === 0 || loading}
-          className="w-full"
-          size="lg"
-        >
-          {loading ? (
-            <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Starting...</>
+          {step < 3 ? (
+            <Button
+              size="sm"
+              onClick={next}
+              disabled={step === 1 && companies.length === 0}
+            >
+              {step === 1 ? `Next: Targeting` : 'Next: Run settings'} <ArrowRight className="w-4 h-4 ml-1" />
+            </Button>
           ) : (
-            <><Play className="w-4 h-4 mr-2" />Start Bulk Scrape ({companies.length.toLocaleString()} companies)</>
+            <Button size="sm" onClick={handleStart} disabled={companies.length === 0 || loading}>
+              {loading ? <><Loader2 className="w-4 h-4 mr-1.5 animate-spin" />Starting…</> : <><Play className="w-4 h-4 mr-1.5" />Start scrape ({companies.length.toLocaleString()})</>}
+            </Button>
           )}
-        </Button>
-
-        <p className="text-xs text-center text-muted-foreground">
-          {workers} {workers === 1 ? 'company' : 'companies'} scraped in parallel with shared deduplication.
-        </p>
+        </div>
       </motion.div>
 
       {/* Active jobs */}

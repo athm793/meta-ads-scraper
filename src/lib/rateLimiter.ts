@@ -1,29 +1,35 @@
 // ---------------------------------------------------------------------------
-// Global Meta request rate limiter + adaptive backoff
+// Meta request backoff + optional proactive throttle
 //
-// Every outbound request to Meta (page navigation, pagination scroll, in-page
-// detail/typeahead GraphQL replays) funnels through one process-wide token
-// bucket. This caps how fast we hit Meta no matter how many bulk workers run
-// in parallel, and an exponential cooldown kicks in the moment Meta signals a
-// block (HTTP 429/403 or a "try again later" body) so we back off instead of
-// hammering a closed door.
+// REACTIVE BY DEFAULT: in normal operation acquire() returns immediately — no
+// global pacing. We only slow down *after* Meta actually pushes back (HTTP
+// 429/403 or a "try again later" body), at which point a short cooldown makes
+// every request wait it out, then it lifts once Meta serves cleanly again.
 //
-// All knobs are env-tunable; defaults are conservative for a single IP.
-//   META_RATE_PER_SEC   sustained requests/sec across everything (default 3)
-//   META_RATE_BURST     bucket capacity for short bursts        (default 6)
+// An earlier version proactively capped the whole process to a few requests/sec
+// via a token bucket. With many bulk workers that throttle strangled throughput
+// (companies never finished), so the proactive cap is now OFF unless explicitly
+// enabled with META_RATE_PER_SEC.
+//
+//   META_RATE_PER_SEC   opt-in sustained requests/sec across everything (unset = off)
+//   META_RATE_BURST     bucket capacity for short bursts (default 8, only if rate set)
 // ---------------------------------------------------------------------------
 
-const RATE_PER_SEC = clampNum(process.env.META_RATE_PER_SEC, 3, 0.1, 50);
-const BURST = clampNum(process.env.META_RATE_BURST, 6, 1, 100);
-
-const BASE_BACKOFF_MS = 4_000;
-const MAX_BACKOFF_MS = 5 * 60 * 1000;
-
-function clampNum(v: string | undefined, dflt: number, min: number, max: number): number {
+function numOrNull(v: string | undefined, min: number, max: number): number | null {
   const n = Number(v);
-  if (!Number.isFinite(n) || n <= 0) return dflt;
+  if (!Number.isFinite(n) || n <= 0) return null;
   return Math.min(max, Math.max(min, n));
 }
+
+// Proactive throttle is opt-in. null = disabled (default).
+const RATE_PER_SEC = numOrNull(process.env.META_RATE_PER_SEC, 0.1, 50);
+const BURST = numOrNull(process.env.META_RATE_BURST, 1, 100) ?? 8;
+
+// Gentle backoff: short base, modest cap, quick recovery — enough to ride out a
+// transient rate-limit without freezing the whole run.
+const BASE_BACKOFF_MS = 2_000;
+const MAX_BACKOFF_MS = 60_000;
+const MAX_BLOCK_EXP = 5; // cap the exponent so 10 simultaneous blocks don't pin the cooldown
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -38,16 +44,16 @@ function cooldownRemaining(): number {
 
 /** Signal that Meta pushed back (429/403/block page). Grows the cooldown. */
 export function reportBlocked(): void {
-  consecutiveBlocks += 1;
+  consecutiveBlocks = Math.min(MAX_BLOCK_EXP, consecutiveBlocks + 1);
   const raw = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (consecutiveBlocks - 1));
-  const jittered = raw * (0.8 + Math.random() * 0.4); // ±20% so workers don't sync up
+  const jittered = raw * (0.7 + Math.random() * 0.6); // ±30% so workers don't sync up
   cooldownUntil = Math.max(cooldownUntil, Date.now() + jittered);
   lastBlockAt = Date.now();
 }
 
-/** Signal a clean response. Gently unwinds the backoff exponent. */
+/** Signal a clean response. Recovers quickly so one block doesn't linger. */
 export function reportOk(): void {
-  if (consecutiveBlocks > 0) consecutiveBlocks -= 1;
+  consecutiveBlocks = 0;
 }
 
 export interface RateLimitState {
@@ -71,7 +77,7 @@ export function throttledSince(ts: number): boolean {
   return lastBlockAt >= ts && lastBlockAt > 0;
 }
 
-// ---- token bucket ----
+// ---- optional token bucket (only used when RATE_PER_SEC is set) ----
 class TokenBucket {
   private tokens: number;
   private last: number;
@@ -85,10 +91,7 @@ class TokenBucket {
     this.last = now;
   }
   async take(): Promise<void> {
-    // Always wait out an active cooldown before spending a token.
     for (;;) {
-      const cd = cooldownRemaining();
-      if (cd > 0) { await sleep(Math.min(cd, 2000)); continue; }
       this.refill();
       if (this.tokens >= 1) { this.tokens -= 1; return; }
       const waitMs = ((1 - this.tokens) / this.ratePerSec) * 1000;
@@ -97,11 +100,20 @@ class TokenBucket {
   }
 }
 
-const bucket = new TokenBucket(RATE_PER_SEC, BURST);
+const bucket = RATE_PER_SEC ? new TokenBucket(RATE_PER_SEC, BURST) : null;
 
-/** Wait until it's safe to make one request to Meta. Respects active cooldowns. */
-export function acquire(): Promise<void> {
-  return bucket.take();
+/**
+ * Wait until it's safe to make one request to Meta.
+ * - Always waits out an active post-block cooldown (reactive backoff).
+ * - Only applies proactive pacing if META_RATE_PER_SEC was set.
+ */
+export async function acquire(): Promise<void> {
+  let cd = cooldownRemaining();
+  while (cd > 0) {
+    await sleep(Math.min(cd, 1500));
+    cd = cooldownRemaining();
+  }
+  if (bucket) await bucket.take();
 }
 
 // ---- block detection helpers ----

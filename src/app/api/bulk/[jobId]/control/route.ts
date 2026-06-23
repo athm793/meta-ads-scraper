@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getBulkJob, updateBulkJobStatus } from '@/lib/db';
+import { getBulkJob, updateBulkJobStatus, resetStuckBulkCompanies } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +24,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ job
   if (action === 'pause') {
     if (job.status === 'running' || job.status === 'queued') {
       updateBulkJobStatus(jobId, 'paused');
+      // Any company left mid-scrape would otherwise show a perpetual "Scraping"
+      // spinner — flip it back to pending so the UI reflects reality.
+      resetStuckBulkCompanies(jobId);
     }
   } else if (action === 'resume') {
     if (job.status === 'paused' || job.status === 'error') {
@@ -32,6 +35,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ job
   } else if (action === 'stop') {
     if (job.status !== 'complete') {
       updateBulkJobStatus(jobId, 'cancelled');
+      resetStuckBulkCompanies(jobId);
     }
   } else {
     return NextResponse.json({ error: 'unknown action' }, { status: 400 });

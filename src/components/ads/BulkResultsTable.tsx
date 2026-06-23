@@ -34,8 +34,13 @@ const JOB_STATUS_META: Record<string, { label: string; className: string }> = {
   error: { label: 'Error', className: 'bg-red-500/15 text-red-400 border-red-500/20' },
 };
 
-function StatusDot({ status, activeCount }: { status: string; activeCount: number }) {
+function StatusDot({ status, activeCount, jobLive }: { status: string; activeCount: number; jobLive: boolean }) {
   if (status === 'scraping') {
+    // Only spin while the job is actually running. If it was stopped/paused, a
+    // lingering "scraping" row is interrupted work, not live — show it as such.
+    if (!jobLive) {
+      return <span className="text-xs text-muted-foreground/60">Interrupted</span>;
+    }
     return (
       <span className="flex items-center gap-1.5 text-xs text-red-400">
         <Loader2 className="w-3 h-3 animate-spin" /> Scraping
@@ -183,7 +188,7 @@ export function BulkResultsTable({ job, companies, onCompanyClick, onExport, onE
                     )}
                   </td>
                   <td className="px-3 py-2.5">
-                    <StatusDot status={c.status} activeCount={c.active_ads_count} />
+                    <StatusDot status={c.status} activeCount={c.active_ads_count} jobLive={isRunning} />
                   </td>
                   <td className="px-3 py-2.5 tabular-nums">
                     {c.status === 'done' || c.status === 'not_found' ? (
