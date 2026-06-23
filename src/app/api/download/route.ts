@@ -26,12 +26,18 @@ export async function GET(req: NextRequest) {
     const ext = contentType.includes('video') ? '.mp4' : '.jpg';
     const body = await res.arrayBuffer();
 
-    return new NextResponse(body, {
-      headers: {
-        'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="ad-creative${ext}"`,
-      },
-    });
+    // inline=1 serves the media for in-page display (img/video src). Routing it
+    // through our same origin also dodges browser ad-blockers / privacy
+    // extensions that block direct requests to facebook.com / fbcdn.net, which
+    // otherwise leave ad previews blank even though the URL is perfectly valid.
+    const inline = req.nextUrl.searchParams.get('inline');
+    const headers: Record<string, string> = {
+      'Content-Type': contentType,
+      'Cache-Control': 'public, max-age=86400',
+    };
+    if (!inline) headers['Content-Disposition'] = `attachment; filename="ad-creative${ext}"`;
+
+    return new NextResponse(body, { headers });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }

@@ -18,7 +18,7 @@ import {
   ImageDown,
   Loader2,
 } from 'lucide-react';
-import { downloadAdMedia, adMediaUrls } from '@/lib/downloadMedia';
+import { downloadAdMedia, adMediaUrls, mediaSrc } from '@/lib/downloadMedia';
 
 const PLATFORM_LABELS: Record<string, string> = {
   FACEBOOK: 'FB',
@@ -52,7 +52,7 @@ function MediaPreview({ ad }: { ad: Ad }) {
     <div className="relative w-full aspect-video bg-black/60 overflow-hidden group/media">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={imgs[imgIdx]}
+        src={mediaSrc(imgs[imgIdx])}
         alt=""
         className="w-full h-full object-cover transition-transform duration-300 group-hover/media:scale-[1.02]"
         loading="lazy"

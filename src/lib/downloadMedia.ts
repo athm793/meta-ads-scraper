@@ -33,6 +33,21 @@ function triggerDownload(blob: Blob, name: string) {
   URL.revokeObjectURL(url);
 }
 
+// Meta CDN hosts whose media should be displayed via our same-origin proxy
+// (avoids ad-blockers and any direct-load quirk; mirrors the /api/download allowlist).
+const PROXY_HOST = /(^|\.)(fbcdn\.net|cdninstagram\.com|fbsbx\.com|facebook\.com)$/i;
+
+/** Returns a src usable in <img>/<video> — proxied through /api/download for Meta CDN. */
+export function mediaSrc(url?: string): string {
+  if (!url) return '';
+  try {
+    if (PROXY_HOST.test(new URL(url).hostname)) {
+      return `/api/download?inline=1&url=${encodeURIComponent(url)}`;
+    }
+  } catch { /* fall through */ }
+  return url;
+}
+
 // Collect every distinct media URL on an ad (videos first, then images/cards)
 export function adMediaUrls(ad: Ad): Array<{ url: string; kind: 'video' | 'image' }> {
   const seen = new Set<string>();

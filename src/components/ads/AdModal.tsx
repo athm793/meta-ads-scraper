@@ -12,7 +12,7 @@ import { motion } from 'framer-motion';
 import { format } from 'date-fns';
 import { TagEditor } from './TagEditor';
 import { adsToCsv, exportFilename } from '@/lib/exportCsv';
-import { downloadAdMedia, adMediaUrls, downloadSingleUrl } from '@/lib/downloadMedia';
+import { downloadAdMedia, adMediaUrls, downloadSingleUrl, mediaSrc } from '@/lib/downloadMedia';
 
 interface AdModalProps {
   ad: Ad | null;
@@ -159,7 +159,7 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                     {ad.carousel_cards[carouselIdx]?.image_url ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
-                        src={ad.carousel_cards[carouselIdx].image_url}
+                        src={mediaSrc(ad.carousel_cards[carouselIdx].image_url)}
                         alt={`Slide ${carouselIdx + 1}`}
                         className="w-full h-full object-contain"
                       />
@@ -210,11 +210,11 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                 <div className="space-y-3">
                   <div className="rounded-xl overflow-hidden bg-black">
                     {videoSrc ? (
-                      <video src={videoSrc} poster={thumbSrc} controls className="w-full max-h-96 object-contain" playsInline />
+                      <video src={mediaSrc(videoSrc)} poster={mediaSrc(thumbSrc)} controls className="w-full max-h-96 object-contain" playsInline />
                     ) : thumbSrc ? (
                       <div className="relative">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={thumbSrc} alt="Video thumbnail" className="w-full max-h-96 object-contain" />
+                        <img src={mediaSrc(thumbSrc)} alt="Video thumbnail" className="w-full max-h-96 object-contain" />
                         <div className="absolute inset-0 flex items-center justify-center bg-black/40">
                           <p className="text-white/70 text-sm">Video not available for playback</p>
                         </div>
@@ -234,7 +234,7 @@ export function AdModal({ ad, open, onClose }: AdModalProps) {
                 <div className="space-y-3">
                   <div className="relative bg-muted rounded-xl overflow-hidden">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={thumbSrc} alt="Ad creative" className="w-full max-h-96 object-contain" />
+                    <img src={mediaSrc(thumbSrc)} alt="Ad creative" className="w-full max-h-96 object-contain" />
                   </div>
                   <Button size="sm" variant="outline" className="h-8 text-xs" onClick={() => handleDownloadOne(thumbSrc)} disabled={dlItem}>
                     {dlItem ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Download className="w-3.5 h-3.5 mr-1.5" />}
