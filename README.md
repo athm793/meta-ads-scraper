@@ -44,10 +44,11 @@ The Meta Ad Library is public but painful to research at scale: no bulk export, 
 - Export your saved/filtered set to CSV or JSON.
 
 ### 🪝 Hook Lab
-A swipe-file and analytics workbench built from the opening line of every ad:
+A swipe-file and trend-intelligence workbench built from the opening line of every ad:
 - **Auto angle-classification** — each hook is tagged as Question / Stat / How-to / Offer / Urgency / Curiosity / Social proof / Emoji-led / Statement.
-- **Filter by angle**, search, and collapse duplicates ("unique angles" ranked by how many advertisers run them).
-- **Stats** — angle distribution (with advertiser counts and average days-running per angle), top CTAs, media mix, most active advertisers, hook length.
+- **Trend stages (creative-viability signal)** — every ad is labelled by how long it's been running: **Battle-tested** (30d+), **Gaining traction** (14–30d), or **New test** (<14d). Long-running ads are the ones advertisers keep because they keep performing. Filter by stage, **sort by longest-running** to surface proven winners, and see the **longest-running ad** for the query at a glance.
+- **Filter by angle**, search, and collapse duplicates ("unique angles" ranked by how many advertisers run them; the longest-running instance of each hook is kept as the example).
+- **Stats** — trend-stage distribution + average ad age + active count, angle distribution (with advertiser counts and average days-running per angle), top CTAs, media mix, most active advertisers.
 - **Trends** — which angles are rising or falling week over week across your whole database.
 - **Headline + CTA extraction** alongside hooks (full swipe file, not just first lines).
 - Click any hook to **jump to its ad**. Copy individually or export the whole swipe file to CSV.
@@ -62,6 +63,14 @@ Check the Meta ad activity of a whole list of companies at once, via a guided up
 - **Scope filters** per job: status, media types, platforms, and optional "fetch ad details".
 - Full **job control** — pause, resume, stop, archive, and delete — from both the job list and inside a job, with live status updates.
 - Job history with live progress, and exports for **company summaries** and **per-ad data (with details)** — both include each brand's matched **Facebook / Instagram username** and how it was matched.
+
+### 🪝 Real-time webhooks
+Optionally push scraped data to an external system as it's found — no polling, no exports to wire up.
+- **Search sessions** — a session is a named run on the Search tab with its own webhook. Press **Play** to make it live: ads scraped or saved while it's playing are pushed to its URL in real time. Press **Pause** to stop (a paused session disappears from the Sessions button so there's no ambiguity about what's live). One session plays at a time. Configurable per session: fire **on save** (only ads you bookmark), **on scrape** (every ad as it streams in), or **both**. A live session with no webhook URL just groups its ads (no firing).
+- **Bulk jobs** — enable a webhook in the upload wizard and each company fires a call as it finishes, carrying the company summary (matched page, handles, ad counts, spend range) **plus that company's ads** in one payload.
+- **One schema for both** — search and bulk fires share the **same JSON body** so you build a single integration. Every payload is `{ event, sent_at, source, job_id, company, ads }`: `company` is always the same shape (a bulk company summary; for search ads it's synthesised from the advertiser, with handle/website fields `null`), and `ads` is always an array of full ad objects. `event`/`source` tell you where it came from (`bulk.company_done`, `search.ad_saved`, `search.ad_scraped`) without needing a second parser; search fires add `session_id`/`session_name` as extra context.
+- **Signed & safe** — set an optional secret and every body is HMAC-SHA256 signed (`X-Webhook-Signature: sha256=…`), alongside `X-Webhook-Event`. Delivery is **non-blocking and fire-and-forget**: a slow or failing webhook never slows or stops a scrape; failed calls retry with backoff and are logged, not surfaced as scrape errors.
+- **Test fire before you commit** — a **Send test** button next to every webhook URL (bulk wizard + session config) POSTs a sample `webhook.test` payload and reports the result inline (`Delivered (200)` or the failure reason), so you can confirm the endpoint is reachable before starting a job or activating a session.
 
 ### 📤 Exports
 - CSV (with a **UTF-8 BOM** so Excel renders emojis and accents correctly) and JSON.

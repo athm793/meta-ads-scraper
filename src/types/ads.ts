@@ -60,6 +60,7 @@ export interface Ad {
   ad_snapshot_url?: string;
   saved: boolean;
   collection_id?: string;
+  session_id?: string;        // search session this ad was scraped under (when active)
   tags?: Tag[];
   scraped_at: string;
   scrape_job_id?: string;
@@ -105,6 +106,30 @@ export interface SearchParams {
   limit?: number;
   deep_search?: boolean;
   fetch_details?: boolean;   // fetch "See ad details" data for every ad
+  session_id?: string;       // active search session — stamps ads + drives per-session webhooks
+}
+
+// Optional outbound webhook config, attached to a bulk job or a search session.
+export interface WebhookConfig {
+  url?: string;
+  secret?: string;           // when set, body is HMAC-SHA256 signed (X-Webhook-Signature)
+  enabled?: boolean;
+}
+
+// When a search webhook fires: on explicit save, on every scraped ad, or both.
+export type SessionFireOn = 'save' | 'scrape' | 'both';
+
+// A search session — a named container on the Search page with its own webhook.
+export interface SearchSession {
+  id: string;
+  name: string;
+  webhook_url?: string;
+  webhook_secret?: string;
+  webhook_enabled: boolean;
+  fire_on: SessionFireOn;
+  created_at: string;
+  last_activity?: string;
+  ad_count?: number;
 }
 
 export interface ScrapeJob {
@@ -153,6 +178,9 @@ export interface BulkJob {
   total_companies: number;
   completed_companies: number;
   filters?: AdScopeFilters;
+  webhook_url?: string;
+  webhook_secret?: string;
+  webhook_enabled?: boolean;
 }
 
 export interface BulkCompany {

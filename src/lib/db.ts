@@ -10,6 +10,9 @@ import type {
   BulkCompany,
   SearchParams,
   AdScopeFilters,
+  WebhookConfig,
+  SearchSession,
+  SessionFireOn,
 } from '@/types/ads';
 
 const DB_DIR = path.join(process.cwd(), 'data');
@@ -60,8 +63,20 @@ function initSchema(db: Database.Database) {
       ad_snapshot_url TEXT,
       saved INTEGER DEFAULT 0,
       collection_id TEXT,
+      session_id TEXT,
       scraped_at TEXT,
       scrape_job_id TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS search_sessions (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      webhook_url TEXT,
+      webhook_secret TEXT,
+      webhook_enabled INTEGER DEFAULT 0,
+      fire_on TEXT DEFAULT 'save',
+      created_at TEXT,
+      last_activity TEXT
     );
 
     CREATE TABLE IF NOT EXISTS collections (
@@ -149,6 +164,11 @@ function initSchema(db: Database.Database) {
       db.exec(`ALTER TABLE ads ADD COLUMN ${col} ${def}`);
     }
   }
+  if (!existingCols.includes('session_id')) {
+    db.exec(`ALTER TABLE ads ADD COLUMN session_id TEXT`);
+  }
+  // Created after the column is guaranteed to exist (fresh table or migrated).
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_ads_session ON ads(session_id)`);
 
   const bulkCols = (db.pragma('table_info(bulk_jobs)') as { name: string }[]).map((c) => c.name);
   if (!bulkCols.includes('archived')) {
@@ -157,6 +177,9 @@ function initSchema(db: Database.Database) {
   if (!bulkCols.includes('filters')) {
     db.exec(`ALTER TABLE bulk_jobs ADD COLUMN filters TEXT DEFAULT '{}'`);
   }
+  if (!bulkCols.includes('webhook_url')) db.exec(`ALTER TABLE bulk_jobs ADD COLUMN webhook_url TEXT`);
+  if (!bulkCols.includes('webhook_secret')) db.exec(`ALTER TABLE bulk_jobs ADD COLUMN webhook_secret TEXT`);
+  if (!bulkCols.includes('webhook_enabled')) db.exec(`ALTER TABLE bulk_jobs ADD COLUMN webhook_enabled INTEGER DEFAULT 0`);
 
   const companyCols = (db.pragma('table_info(bulk_job_companies)') as { name: string }[]).map((c) => c.name);
   if (!companyCols.includes('category')) db.exec(`ALTER TABLE bulk_job_companies ADD COLUMN category TEXT`);
@@ -176,7 +199,7 @@ export function upsertAd(ad: Ad) {
       status, category, started_at, stopped_at, days_running, country, language,
       spend_min, spend_max, spend_currency, impressions_min, impressions_max,
       funding_entity, demographic_distribution, region_distribution,
-      ad_snapshot_url, saved, collection_id, scraped_at, scrape_job_id,
+      ad_snapshot_url, saved, collection_id, session_id, scraped_at, scrape_job_id,
       deep_search_done, targeting_age_min, targeting_age_max, targeting_gender,
       targeting_locations, targeting_interests, policy_status,
       detail_fetched, total_reach, beneficiary, payer
@@ -186,7 +209,7 @@ export function upsertAd(ad: Ad) {
       @status, @category, @started_at, @stopped_at, @days_running, @country, @language,
       @spend_min, @spend_max, @spend_currency, @impressions_min, @impressions_max,
       @funding_entity, @demographic_distribution, @region_distribution,
-      @ad_snapshot_url, @saved, @collection_id, @scraped_at, @scrape_job_id,
+      @ad_snapshot_url, @saved, @collection_id, @session_id, @scraped_at, @scrape_job_id,
       @deep_search_done, @targeting_age_min, @targeting_age_max, @targeting_gender,
       @targeting_locations, @targeting_interests, @policy_status,
       @detail_fetched, @total_reach, @beneficiary, @payer
@@ -202,6 +225,7 @@ export function upsertAd(ad: Ad) {
     region_distribution: JSON.stringify(ad.region_distribution),
     saved: ad.saved ? 1 : 0,
     advertiser_page_id: ad.advertiser_page_id ?? null,
+    session_id: ad.session_id ?? null,
     headline: ad.headline ?? null,
     cta_text: ad.cta_text ?? null,
     link_url: ad.link_url ?? null,
@@ -257,6 +281,7 @@ export function queryAds(params: {
   status?: string;
   saved?: boolean;
   collection_id?: string;
+  session_id?: string;
   tag_id?: string;
   job_id?: string;
   page?: number;
@@ -289,6 +314,10 @@ export function queryAds(params: {
   if (params.collection_id) {
     conditions.push(`collection_id = @collection_id`);
     bindings.collection_id = params.collection_id;
+  }
+  if (params.session_id) {
+    conditions.push(`session_id = @session_id`);
+    bindings.session_id = params.session_id;
   }
   if (params.tag_id) {
     conditions.push(`id IN (SELECT ad_id FROM ad_tags WHERE tag_id = @tag_id)`);
@@ -374,6 +403,111 @@ export function deleteCollection(id: string) {
   const db = getDb();
   db.prepare('UPDATE ads SET collection_id = NULL WHERE collection_id = ?').run(id);
   db.prepare('DELETE FROM collections WHERE id = ?').run(id);
+}
+
+// Search sessions — named containers on the Search page, each with its own
+// optional outbound webhook. Ads scraped while a session is active are stamped
+// with its id (ads.session_id) so a session's set can be queried/exported later.
+function rowToSession(row: Record<string, unknown> | undefined): SearchSession | null {
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    webhook_url: (row.webhook_url as string) ?? undefined,
+    webhook_secret: (row.webhook_secret as string) ?? undefined,
+    webhook_enabled: row.webhook_enabled === 1,
+    fire_on: (row.fire_on as SessionFireOn) || 'save',
+    created_at: String(row.created_at),
+    last_activity: (row.last_activity as string) ?? undefined,
+    ad_count: typeof row.ad_count === 'number' ? row.ad_count : undefined,
+  };
+}
+
+export function listSearchSessions(): SearchSession[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT s.*, COUNT(a.id) as ad_count
+    FROM search_sessions s
+    LEFT JOIN ads a ON a.session_id = s.id
+    GROUP BY s.id
+    ORDER BY s.created_at DESC
+  `).all() as Record<string, unknown>[];
+  return rows.map((r) => rowToSession(r)!).filter(Boolean);
+}
+
+export function getSearchSession(id: string): SearchSession | null {
+  const db = getDb();
+  return rowToSession(db.prepare('SELECT * FROM search_sessions WHERE id = ?').get(id) as Record<string, unknown> | undefined);
+}
+
+export function createSearchSession(input: {
+  name: string;
+  webhook_url?: string;
+  webhook_secret?: string;
+  webhook_enabled?: boolean;
+  fire_on?: SessionFireOn;
+}): SearchSession {
+  const db = getDb();
+  const id = crypto.randomUUID();
+  const created_at = new Date().toISOString();
+  // webhook_enabled is derived: a session "has a webhook" iff it has a URL. Play/Pause
+  // (the live state) is what controls firing now, not a separate enable flag.
+  const hasUrl = !!input.webhook_url;
+  db.prepare(
+    'INSERT INTO search_sessions (id, name, webhook_url, webhook_secret, webhook_enabled, fire_on, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    id, input.name, input.webhook_url ?? null, input.webhook_secret ?? null,
+    hasUrl ? 1 : 0, input.fire_on ?? 'save', created_at
+  );
+  return {
+    id, name: input.name, webhook_url: input.webhook_url, webhook_secret: input.webhook_secret,
+    webhook_enabled: hasUrl, fire_on: input.fire_on ?? 'save', created_at,
+  };
+}
+
+export function updateSearchSession(id: string, patch: {
+  name?: string;
+  webhook_url?: string;
+  webhook_secret?: string;
+  webhook_enabled?: boolean;
+  fire_on?: SessionFireOn;
+}): SearchSession | null {
+  const db = getDb();
+  const sets: string[] = [];
+  const vals: unknown[] = [];
+  if (patch.name !== undefined) { sets.push('name = ?'); vals.push(patch.name); }
+  if (patch.webhook_url !== undefined) {
+    sets.push('webhook_url = ?'); vals.push(patch.webhook_url || null);
+    // Keep webhook_enabled mirrored to URL presence (derived, not user-controlled).
+    sets.push('webhook_enabled = ?'); vals.push(patch.webhook_url ? 1 : 0);
+  }
+  if (patch.webhook_secret !== undefined) { sets.push('webhook_secret = ?'); vals.push(patch.webhook_secret || null); }
+  if (patch.fire_on !== undefined) { sets.push('fire_on = ?'); vals.push(patch.fire_on); }
+  if (sets.length > 0) {
+    vals.push(id);
+    db.prepare(`UPDATE search_sessions SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+  }
+  return getSearchSession(id);
+}
+
+// Record that a session just produced/saved an ad (drives "last_activity").
+export function touchSearchSession(id: string) {
+  const db = getDb();
+  db.prepare('UPDATE search_sessions SET last_activity = ? WHERE id = ?').run(new Date().toISOString(), id);
+}
+
+export function deleteSearchSession(id: string) {
+  const db = getDb();
+  // Keep the ads — just detach them from the deleted session.
+  db.prepare('UPDATE ads SET session_id = NULL WHERE session_id = ?').run(id);
+  db.prepare('DELETE FROM search_sessions WHERE id = ?').run(id);
+}
+
+// Resolve a session's webhook config (null if the session is gone).
+export function getSessionWebhook(id: string): WebhookConfig | null {
+  const s = getSearchSession(id);
+  if (!s) return null;
+  return { url: s.webhook_url, secret: s.webhook_secret, enabled: s.webhook_enabled };
 }
 
 // Tags
@@ -482,13 +616,17 @@ export function getScrapeJobs(): ScrapeJob[] {
 export function createBulkJob(
   name: string,
   companies: Array<{ company_name: string; website?: string; category?: string; page_id?: string }>,
-  filters?: AdScopeFilters
+  filters?: AdScopeFilters,
+  webhook?: WebhookConfig
 ): BulkJob {
   const db = getDb();
   const id = crypto.randomUUID();
   const created_at = new Date().toISOString();
-  db.prepare('INSERT INTO bulk_jobs (id, name, created_at, status, total_companies, filters) VALUES (?, ?, ?, ?, ?, ?)').run(
-    id, name, created_at, 'queued', companies.length, JSON.stringify(filters ?? {})
+  db.prepare(
+    'INSERT INTO bulk_jobs (id, name, created_at, status, total_companies, filters, webhook_url, webhook_secret, webhook_enabled) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    id, name, created_at, 'queued', companies.length, JSON.stringify(filters ?? {}),
+    webhook?.url ?? null, webhook?.secret ?? null, webhook?.enabled ? 1 : 0
   );
   const insertCompany = db.prepare(
     'INSERT INTO bulk_job_companies (id, job_id, company_name, website, category, matched_page_id, status) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -498,14 +636,17 @@ export function createBulkJob(
     // fuzzy typeahead match entirely and scrapes the exact page.
     insertCompany.run(crypto.randomUUID(), id, c.company_name, c.website ?? null, c.category ?? null, c.page_id ?? null, 'pending');
   }
-  return { id, name, created_at, status: 'queued', total_companies: companies.length, completed_companies: 0, filters: filters ?? {} };
+  return {
+    id, name, created_at, status: 'queued', total_companies: companies.length, completed_companies: 0,
+    filters: filters ?? {}, webhook_url: webhook?.url, webhook_secret: webhook?.secret, webhook_enabled: !!webhook?.enabled,
+  };
 }
 
 function rowToBulkJob(row: Record<string, unknown> | undefined): BulkJob | null {
   if (!row) return null;
   let filters: AdScopeFilters = {};
   try { filters = JSON.parse(String(row.filters || '{}')); } catch { /* default */ }
-  return { ...(row as unknown as BulkJob), filters };
+  return { ...(row as unknown as BulkJob), filters, webhook_enabled: row.webhook_enabled === 1 };
 }
 
 export function getBulkJob(id: string): BulkJob | null {

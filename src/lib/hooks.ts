@@ -44,6 +44,40 @@ export function primaryAngle(text: string): string {
   return classifyHook(text)[0];
 }
 
+// Duration-based "trend stage" — ad longevity is a practical proxy for creative
+// viability: an ad an advertiser keeps running is one that keeps performing.
+export type TrendStage = 'battle_tested' | 'gaining' | 'new' | 'unknown';
+
+export interface StageMeta { key: TrendStage; label: string; short: string; color: string }
+export const TREND_STAGES: StageMeta[] = [
+  { key: 'battle_tested', label: 'Battle-tested', short: '30d+', color: '#10b981' },
+  { key: 'gaining', label: 'Gaining traction', short: '14–30d', color: '#f59e0b' },
+  { key: 'new', label: 'New test', short: '<14d', color: '#3b82f6' },
+];
+export const STAGE_LABEL: Record<TrendStage, string> = {
+  battle_tested: 'Battle-tested', gaining: 'Gaining traction', new: 'New test', unknown: 'Unknown age',
+};
+export const STAGE_COLOR: Record<TrendStage, string> = {
+  battle_tested: '#10b981', gaining: '#f59e0b', new: '#3b82f6', unknown: '#94a3b8',
+};
+
+/** Ad age in days — prefers Meta's own days_running, falls back to start date. */
+export function adAgeDays(ad: Ad): number | null {
+  if (ad.days_running != null) return ad.days_running;
+  if (ad.started_at) {
+    const start = new Date(ad.started_at).getTime();
+    if (!Number.isNaN(start)) return Math.max(0, Math.floor((Date.now() - start) / 86_400_000));
+  }
+  return null;
+}
+
+export function trendStage(ageDays: number | null): TrendStage {
+  if (ageDays == null) return 'unknown';
+  if (ageDays >= 30) return 'battle_tested';
+  if (ageDays >= 14) return 'gaining';
+  return 'new';
+}
+
 export interface HookRecord {
   id: string;
   advertiser: string;
@@ -53,6 +87,8 @@ export interface HookRecord {
   mediaType: string;
   status: string;
   daysRunning?: number;
+  ageDays: number | null;
+  stage: TrendStage;
   angles: string[];
   primary: string;
 }
@@ -63,6 +99,7 @@ export function adToHook(ad: Ad): HookRecord | null {
   const hook = body.split('\n')[0].trim().slice(0, 240);
   if (!hook) return null;
   const angles = classifyHook(hook);
+  const ageDays = adAgeDays(ad);
   return {
     id: ad.id,
     advertiser: ad.advertiser_name,
@@ -72,6 +109,8 @@ export function adToHook(ad: Ad): HookRecord | null {
     mediaType: ad.media_type,
     status: ad.status,
     daysRunning: ad.days_running,
+    ageDays,
+    stage: trendStage(ageDays),
     angles,
     primary: angles[0],
   };

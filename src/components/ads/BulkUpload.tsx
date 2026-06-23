@@ -18,6 +18,7 @@ import Papa from 'papaparse';
 import type { BulkJob, MediaType, Platform } from '@/types/ads';
 import { formatDistanceToNow } from 'date-fns';
 import { CountryCombobox } from './CountryCombobox';
+import { WebhookTester } from './WebhookTester';
 import { extractPageId } from '@/lib/adLibraryUrl';
 
 const MEDIA_OPTS: { value: MediaType; label: string }[] = [
@@ -288,6 +289,9 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [matchPages, setMatchPages] = useState(true);
   const [matchCountry, setMatchCountry] = useState('US');
   const [workers, setWorkers] = useState(4);
+  const [webhookEnabled, setWebhookEnabled] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
 
   // Restore the last-used worker count so it persists between runs/startups
   useEffect(() => {
@@ -447,6 +451,11 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
             match_pages: matchPages,
             country: matchCountry,
             workers,
+          },
+          webhook: {
+            url: webhookUrl.trim() || undefined,
+            secret: webhookSecret.trim() || undefined,
+            enabled: webhookEnabled && !!webhookUrl.trim(),
           },
         }),
       });
@@ -780,6 +789,45 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                   </p>
                 )}
 
+                {/* Webhook — optional real-time push per completed company */}
+                <div className="space-y-2.5">
+                  <button onClick={() => setWebhookEnabled((v) => !v)} className="flex items-center gap-2 w-full text-left">
+                    <span className={cn('relative inline-flex h-4 w-7 shrink-0 rounded-full transition-colors', webhookEnabled ? 'bg-primary' : 'bg-muted-foreground/30')}>
+                      <span className={cn('absolute top-0.5 h-3 w-3 rounded-full bg-white transition-transform', webhookEnabled ? 'translate-x-3.5' : 'translate-x-0.5')} />
+                    </span>
+                    <span className="text-xs">
+                      <span className="font-medium">Send to webhook</span>
+                      <span className="text-muted-foreground"> — POST each company&apos;s summary + its ads in real time as it finishes.</span>
+                    </span>
+                  </button>
+                  {webhookEnabled && (
+                    <div className="space-y-2 pl-9">
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">Webhook URL <span className="text-primary">*</span></Label>
+                        <Input
+                          placeholder="https://example.com/hooks/meta-ads"
+                          value={webhookUrl}
+                          onChange={(e) => setWebhookUrl(e.target.value)}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-[11px] text-muted-foreground">Signing secret (optional)</Label>
+                        <Input
+                          placeholder="Used to sign payloads (X-Webhook-Signature)"
+                          value={webhookSecret}
+                          onChange={(e) => setWebhookSecret(e.target.value)}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                      <WebhookTester url={webhookUrl} secret={webhookSecret} source="bulk" />
+                      <p className="text-[11px] text-muted-foreground/70 leading-relaxed">
+                        Fires <span className="font-mono text-foreground/80">bulk.company_done</span> per company. Delivery is non-blocking — a failing webhook never slows or stops the scrape. Send a test first to confirm the URL is reachable.
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 {/* Review */}
                 <div className="rounded-lg border border-border/50 bg-muted/20 p-3.5 space-y-2.5">
                   <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Review</p>
@@ -789,6 +837,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                   <SummaryRow icon={Target} label="Scope" value={`${scopeStatus === 'ALL' ? 'Active + inactive' : scopeStatus === 'ACTIVE' ? 'Active only' : 'Inactive only'} · ${scopeMedia.length ? scopeMedia.length + ' media' : 'all media'} · ${scopePlatforms.length ? scopePlatforms.length + ' platforms' : 'all platforms'}`} />
                   <SummaryRow icon={Rocket} label="Speed" value={`${workers} parallel ${workers === 1 ? 'worker' : 'workers'}`} />
                   <SummaryRow icon={Tag} label="Ad details" value={fetchDetails ? 'Fetched per ad' : 'Skipped (faster)'} />
+                  <SummaryRow icon={Rocket} label="Webhook" value={webhookEnabled && webhookUrl.trim() ? `On · ${webhookUrl.trim()}` : 'Off'} />
                 </div>
               </motion.div>
             )}

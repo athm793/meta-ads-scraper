@@ -12,6 +12,7 @@ import { AdGrid } from '@/components/ads/AdGrid';
 import { AdModal } from '@/components/ads/AdModal';
 import { FiltersPanel } from '@/components/ads/FiltersPanel';
 import { CollectionsPanel } from '@/components/ads/CollectionsPanel';
+import { SessionsPanel } from '@/components/ads/SessionsPanel';
 import { HookExtractor } from '@/components/ads/HookExtractor';
 import { BulkUpload } from '@/components/ads/BulkUpload';
 import { BulkResultsTable } from '@/components/ads/BulkResultsTable';
@@ -20,10 +21,10 @@ import { AdvertiserSearch } from '@/components/ads/AdvertiserSearch';
 import { ResultsFilterBar, EMPTY_RESULT_FILTERS, type ResultFilters } from '@/components/ads/ResultsFilterBar';
 import { Pagination } from '@/components/ads/Pagination';
 import { adsToCsv, exportFilename } from '@/lib/exportCsv';
-import type { Ad, SearchParams, Collection, Tag, BulkCompany, BulkJob, AdvertiserSuggestion } from '@/types/ads';
+import type { Ad, SearchParams, Collection, Tag, BulkCompany, BulkJob, AdvertiserSuggestion, SearchSession } from '@/types/ads';
 import {
   Search, BookMarked, Users, Zap, FolderPlus, Download,
-  Square, PanelLeftOpen, AlertTriangle, X,
+  Square, PanelLeftOpen, AlertTriangle, X, Webhook, Pause,
 } from 'lucide-react';
 
 const DEFAULT_PARAMS: SearchParams = {
@@ -64,6 +65,8 @@ export default function HomePage() {
   const [tab, setTab] = useState('search');
   const [showFilters, setShowFilters] = useState(true);
   const [collectionsOpen, setCollectionsOpen] = useState(false);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [hooksOpen, setHooksOpen] = useState(false);
   const [activeCollection, setActiveCollection] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
@@ -102,6 +105,12 @@ export default function HomePage() {
     queryFn: () => fetch('/api/tags').then((r) => r.json()),
   });
 
+  const { data: sessions = [] } = useQuery<SearchSession[]>({
+    queryKey: ['sessions'],
+    queryFn: () => fetch('/api/sessions').then((r) => r.json()),
+  });
+  const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
+
   const { data: savedData, refetch: refetchSaved } = useQuery({
     queryKey: ['saved-ads', activeCollection, activeTag, savedSearch, sortBy],
     queryFn: () => {
@@ -129,6 +138,7 @@ export default function HomePage() {
       advertiser: advertiser || undefined,
       deep_search: true,
       fetch_details: true,
+      session_id: activeSessionId || undefined,
       ...override,
     };
     if (!params.keyword && !params.advertiser && !params.page_id) {
@@ -199,9 +209,10 @@ export default function HomePage() {
     await fetch(`/api/ads/${id}/save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ saved }),
+      body: JSON.stringify({ saved, session_id: activeSessionId || undefined }),
     });
     setLiveAds((prev) => prev.map((a) => (a.id === id ? { ...a, saved } : a)));
+    if (activeSessionId) queryClient.invalidateQueries({ queryKey: ['sessions'] });
     if (tab === 'saved') refetchSaved();
   }
 
@@ -377,12 +388,14 @@ export default function HomePage() {
       const sf = localStorage.getItem('mas_show_filters');
       const fp = localStorage.getItem('mas_filter_params');
       const so = localStorage.getItem('mas_sort');
+      const sid = localStorage.getItem('mas_session_id');
       /* eslint-disable react-hooks/set-state-in-effect */
       if (t === 'search' || t === 'saved' || t === 'bulk') setTab(t);
       if (jid) setBulkJobId(jid);
       if (sf === '0') setShowFilters(false);
       if (fp) { try { setFilterParams({ ...DEFAULT_PARAMS, ...JSON.parse(fp) }); } catch { /* ignore */ } }
       if (so) setSortBy(so);
+      if (sid) setActiveSessionId(sid);
       /* eslint-enable react-hooks/set-state-in-effect */
     } catch { /* ignore */ }
   }, []);
@@ -409,6 +422,13 @@ export default function HomePage() {
       else localStorage.removeItem('mas_bulkJobId');
     } catch { /* ignore */ }
   }, [bulkJobId]);
+
+  useEffect(() => {
+    try {
+      if (activeSessionId) localStorage.setItem('mas_session_id', activeSessionId);
+      else localStorage.removeItem('mas_session_id');
+    } catch { /* ignore */ }
+  }, [activeSessionId]);
 
   const sortedAds = [...liveAds].sort((a, b) => {
     if (sortBy === 'days_running') return (b.days_running ?? 0) - (a.days_running ?? 0);
@@ -510,6 +530,45 @@ export default function HomePage() {
                 <Button size="sm" variant="outline" onClick={() => setCollectionsOpen(true)} className="h-8 text-xs">
                   <FolderPlus className="w-3 h-3 mr-1" />Collections
                 </Button>
+                {activeSession ? (
+                  // A session is live (playing) — show its name + a pulse when it
+                  // will fire, plus an inline Pause to stop without opening the panel.
+                  <div className="flex items-center h-8 rounded-md border border-emerald-500/50 bg-emerald-500/10 overflow-hidden max-w-[220px]">
+                    <button
+                      onClick={() => setSessionsOpen(true)}
+                      title={`Live session: ${activeSession.name}`}
+                      className="flex items-center gap-1.5 h-full pl-2.5 pr-2 text-xs min-w-0 hover:bg-emerald-500/15 transition-colors"
+                    >
+                      {activeSession.webhook_url ? (
+                        <span className="relative flex h-1.5 w-1.5 shrink-0">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-70" />
+                          <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                        </span>
+                      ) : (
+                        <Webhook className="w-3 h-3 shrink-0 text-emerald-400" />
+                      )}
+                      <span className="truncate text-emerald-300">{activeSession.name}</span>
+                    </button>
+                    <button
+                      onClick={() => setActiveSessionId(null)}
+                      title="Pause session"
+                      className="h-full px-2 border-l border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors shrink-0"
+                    >
+                      <Pause className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setSessionsOpen(true)}
+                    className="h-8 text-xs"
+                    title="Search sessions"
+                  >
+                    <Webhook className="w-3 h-3 mr-1 shrink-0" />
+                    <span>Sessions</span>
+                  </Button>
+                )}
                 {filteredAds.length > 0 && (
                   <>
                     <Button size="sm" variant="outline" onClick={() => downloadSearch('csv')} className="h-8 text-xs">
@@ -793,6 +852,15 @@ export default function HomePage() {
         onDelete={deleteCollection}
         onCreateTag={createTag}
         onDeleteTag={deleteTag}
+      />
+
+      <SessionsPanel
+        open={sessionsOpen}
+        onClose={() => setSessionsOpen(false)}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        onSelectActive={setActiveSessionId}
+        onChanged={() => queryClient.invalidateQueries({ queryKey: ['sessions'] })}
       />
 
       <HookExtractor

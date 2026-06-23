@@ -7,8 +7,8 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useQuery } from '@tanstack/react-query';
 import type { Ad } from '@/types/ads';
-import { adToHook, ANGLES, ANGLE_LABEL, ANGLE_COLOR, type HookRecord } from '@/lib/hooks';
-import { Copy, Check, Search, Download, Layers, List, BarChart3, TrendingUp, TrendingDown, Minus, ArrowRight } from 'lucide-react';
+import { adToHook, ANGLES, ANGLE_LABEL, ANGLE_COLOR, TREND_STAGES, STAGE_LABEL, STAGE_COLOR, type HookRecord, type TrendStage } from '@/lib/hooks';
+import { Copy, Check, Search, Download, Layers, List, BarChart3, TrendingUp, TrendingDown, Minus, ArrowRight, Flame, Clock, SortDesc } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 interface HookExtractorProps {
@@ -29,12 +29,25 @@ function AngleBadge({ angle }: { angle: string }) {
   );
 }
 
+function StageBadge({ stage, days }: { stage: TrendStage; days: number | null }) {
+  if (stage === 'unknown') return null;
+  const c = STAGE_COLOR[stage];
+  return (
+    <span className="inline-flex items-center gap-1 h-4 px-1.5 rounded text-[10px] font-semibold border" style={{ borderColor: c + '66', background: c + '22', color: c }}>
+      {stage === 'battle_tested' && <Flame className="w-2.5 h-2.5" />}
+      {STAGE_LABEL[stage]}{days != null ? ` · ${days}d` : ''}
+    </span>
+  );
+}
+
 export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorProps) {
   const [copied, setCopied] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<View>('hooks');
   const [unique, setUnique] = useState(true);
   const [angleFilter, setAngleFilter] = useState<string | null>(null);
+  const [stageFilter, setStageFilter] = useState<TrendStage | null>(null);
+  const [sortMode, setSortMode] = useState<'top' | 'longest'>('top');
 
   const records = useMemo<HookRecord[]>(() => ads.map(adToHook).filter(Boolean) as HookRecord[], [ads]);
 
@@ -44,24 +57,36 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
       records.filter(
         (r) =>
           (!angleFilter || r.angles.includes(angleFilter)) &&
+          (!stageFilter || r.stage === stageFilter) &&
           (!q || r.hook.toLowerCase().includes(q) || r.advertiser.toLowerCase().includes(q) || (r.headline || '').toLowerCase().includes(q))
       ),
-    [records, q, angleFilter]
+    [records, q, angleFilter, stageFilter]
   );
 
-  // Dedupe identical hooks, keep one record + count
+  // Dedupe identical hooks: keep the longest-running instance as the representative
+  // (so the stage badge reflects the battle-tested version), plus a run count.
   const uniqueRecords = useMemo(() => {
     const map = new Map<string, HookRecord & { count: number }>();
     for (const r of filtered) {
       const k = r.hook.toLowerCase();
       const g = map.get(k);
-      if (g) g.count++;
-      else map.set(k, { ...r, count: 1 });
+      if (g) {
+        g.count++;
+        if ((r.ageDays ?? -1) > (g.ageDays ?? -1)) { const c = g.count; Object.assign(g, r); g.count = c; }
+      } else {
+        map.set(k, { ...r, count: 1 });
+      }
     }
-    return [...map.values()].sort((a, b) => b.count - a.count);
+    return [...map.values()];
   }, [filtered]);
 
-  const list = unique ? uniqueRecords : filtered.map((r) => ({ ...r, count: 1 }));
+  const list = useMemo(() => {
+    const base = unique ? uniqueRecords : filtered.map((r) => ({ ...r, count: 1 }));
+    const sorted = [...base];
+    if (sortMode === 'longest') sorted.sort((a, b) => (b.ageDays ?? -1) - (a.ageDays ?? -1));
+    else sorted.sort((a, b) => b.count - a.count || (b.ageDays ?? -1) - (a.ageDays ?? -1));
+    return sorted;
+  }, [unique, uniqueRecords, filtered, sortMode]);
 
   // ---- Stats ----
   const stats = useMemo(() => {
@@ -94,14 +119,32 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
       };
     }).filter((a) => a.count > 0).sort((a, b) => b.count - a.count);
     const top = (m: Map<string, number>, n: number) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
+
+    // Trend stages (duration-based) — the actor's core "creative viability" signal
+    const stageCounts: Record<TrendStage, number> = { battle_tested: 0, gaining: 0, new: 0, unknown: 0 };
+    const ages: number[] = [];
+    let active = 0;
+    let longest: HookRecord | null = null;
+    for (const r of records) {
+      stageCounts[r.stage]++;
+      if (r.ageDays != null) ages.push(r.ageDays);
+      if (r.status === 'ACTIVE') active++;
+      if (r.ageDays != null && (longest == null || r.ageDays > (longest.ageDays ?? -1))) longest = r;
+    }
+    const avgAge = ages.length ? Math.round(ages.reduce((s, n) => s + n, 0) / ages.length) : null;
+
     return {
       total: records.length,
+      active,
       unique: new Set(records.map((r) => r.hook.toLowerCase())).size,
       avgLen: records.length ? Math.round(totalLen / records.length) : 0,
       angleStats,
       topCtas: top(ctas, 8),
       media: top(media, 6),
       topAdvertisers: top(advertisers, 8),
+      stageCounts,
+      avgAge,
+      longest,
     };
   }, [records]);
 
@@ -123,8 +166,8 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
   function exportCsv() {
     const esc = (s: string) => `"${String(s ?? '').replace(/"/g, '""')}"`;
     const rows = [
-      ['Hook', 'Angles', 'Headline', 'CTA', 'Advertiser', 'Media', 'Status', 'Days Running', 'Count'],
-      ...list.map((r) => [r.hook, r.angles.map((a) => ANGLE_LABEL[a]).join(' / '), r.headline || '', r.cta || '', r.advertiser, r.mediaType, r.status, String(r.daysRunning ?? ''), String(r.count)]),
+      ['Hook', 'Angles', 'Trend stage', 'Ad age (days)', 'Headline', 'CTA', 'Advertiser', 'Media', 'Status', 'Days Running', 'Count'],
+      ...list.map((r) => [r.hook, r.angles.map((a) => ANGLE_LABEL[a]).join(' / '), STAGE_LABEL[r.stage], String(r.ageDays ?? ''), r.headline || '', r.cta || '', r.advertiser, r.mediaType, r.status, String(r.daysRunning ?? ''), String(r.count)]),
     ];
     const csv = '﻿' + rows.map((r) => r.map(esc).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -197,6 +240,32 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
                 ))}
               </div>
 
+              {/* Trend-stage chips (duration) + longest-running sort */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button onClick={() => setStageFilter(null)} className={`px-2 h-6 rounded-full text-[11px] border transition-colors ${!stageFilter ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:text-foreground'}`}>
+                  All ages
+                </button>
+                {TREND_STAGES.map((s) => (
+                  <button
+                    key={s.key}
+                    onClick={() => setStageFilter(stageFilter === s.key ? null : s.key)}
+                    className="px-2 h-6 rounded-full text-[11px] border transition-colors flex items-center gap-1"
+                    style={stageFilter === s.key ? { background: s.color, borderColor: s.color, color: '#fff' } : { borderColor: s.color + '55', color: s.color }}
+                    title={`${s.label} (${s.short})`}
+                  >
+                    {s.key === 'battle_tested' && <Flame className="w-3 h-3" />}
+                    {s.label} <span className="opacity-70">{stats.stageCounts[s.key]}</span>
+                  </button>
+                ))}
+                <button
+                  onClick={() => setSortMode((m) => (m === 'longest' ? 'top' : 'longest'))}
+                  className={`ml-auto h-6 px-2 rounded-md text-[11px] border flex items-center gap-1 transition-colors ${sortMode === 'longest' ? 'bg-emerald-500/15 border-emerald-500/50 text-emerald-400' : 'border-border text-muted-foreground hover:text-foreground'}`}
+                  title="Sort by longest-running (most battle-tested first)"
+                >
+                  {sortMode === 'longest' ? <SortDesc className="w-3.5 h-3.5" /> : <Clock className="w-3.5 h-3.5" />} Longest
+                </button>
+              </div>
+
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="outline" className="h-7 text-xs flex-1" onClick={copyAll} disabled={list.length === 0}>
                   {copied === 'all' ? <Check className="w-3.5 h-3.5 mr-1 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 mr-1" />} Copy all ({list.length})
@@ -218,6 +287,7 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
                   <div className="flex items-start gap-2.5">
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+                        <StageBadge stage={r.stage} days={r.ageDays} />
                         {r.angles.map((a) => <AngleBadge key={a} angle={a} />)}
                         {r.count > 1 && <span className="text-[10px] text-primary font-semibold">×{r.count}</span>}
                       </div>
@@ -256,12 +326,50 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
           <ScrollArea className="flex-1 min-h-0">
             <div className="px-5 py-4 space-y-6">
               <div className="grid grid-cols-3 gap-2">
-                {[['Hooks', stats.total], ['Unique', stats.unique], ['Avg chars', stats.avgLen]].map(([l, v]) => (
+                {[['Hooks', stats.total], ['Active', stats.active], ['Avg age', stats.avgAge != null ? `${stats.avgAge}d` : '—']].map(([l, v]) => (
                   <div key={l} className="border border-border/60 rounded-lg p-2.5 text-center">
-                    <p className="text-xl font-bold tabular-nums">{Number(v).toLocaleString()}</p>
+                    <p className="text-xl font-bold tabular-nums">{typeof v === 'number' ? v.toLocaleString() : v}</p>
                     <p className="text-[11px] text-muted-foreground">{l}</p>
                   </div>
                 ))}
+              </div>
+
+              {/* Trend stages — duration-based creative viability */}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Trend stages</p>
+                <div className="space-y-2">
+                  {TREND_STAGES.map((s) => {
+                    const count = stats.stageCounts[s.key];
+                    const pct = stats.total ? Math.round((count / stats.total) * 100) : 0;
+                    return (
+                      <div key={s.key} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="flex items-center gap-1.5">
+                            {s.key === 'battle_tested' ? <Flame className="w-3 h-3" style={{ color: s.color }} /> : <span className="w-2 h-2 rounded-full" style={{ background: s.color }} />}
+                            {s.label} <span className="text-muted-foreground">({s.short})</span>
+                          </span>
+                          <span className="text-muted-foreground tabular-nums">{count} · {pct}%</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: s.color }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {stats.longest && stats.longest.ageDays != null && (
+                  <button
+                    onClick={() => onSelectAd?.(stats.longest!.id)}
+                    className="mt-3 w-full text-left rounded-lg border border-emerald-500/30 bg-emerald-500/[0.06] p-2.5 hover:bg-emerald-500/10 transition-colors"
+                    title="View this ad"
+                  >
+                    <p className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400">
+                      <Flame className="w-3 h-3" /> Longest-running ad · {stats.longest.ageDays}d
+                    </p>
+                    <p className="text-xs mt-1 line-clamp-2">{stats.longest.hook}</p>
+                    <p className="text-[11px] text-muted-foreground mt-1 truncate">{stats.longest.advertiser}</p>
+                  </button>
+                )}
               </div>
 
               <div>

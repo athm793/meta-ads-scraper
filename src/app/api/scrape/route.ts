@@ -1,8 +1,9 @@
 import { NextRequest } from 'next/server';
 import { scrapeAds } from '@/lib/scraper';
-import { upsertAd, createScrapeJob, completeScrapeJob, errorScrapeJob, getPreviousJobAds } from '@/lib/db';
+import { upsertAd, createScrapeJob, completeScrapeJob, errorScrapeJob, getPreviousJobAds, getSearchSession, touchSearchSession } from '@/lib/db';
 import { signalStatus } from '@/lib/metaHealth';
 import { totalBlockCount } from '@/lib/rateLimiter';
+import { deliverWebhook, buildAdvertiserCompany } from '@/lib/webhook';
 import type { SearchParams, Ad } from '@/types/ads';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,12 @@ export async function POST(req: NextRequest) {
   const params: SearchParams = await req.json();
   const jobId = createScrapeJob(params);
   const previousIds = params.advertiser ? getPreviousJobAds(params.advertiser, jobId) : new Set<string>();
+
+  // Optional live (playing) search session — stamp scraped ads with it, and (when
+  // it has a webhook URL and fires on scrape) push each ad in real time. The client
+  // only sends session_id for the live session, so paused sessions never reach here.
+  const session = params.session_id ? getSearchSession(params.session_id) : null;
+  const fireOnScrape = !!session?.webhook_url && (session.fire_on === 'scrape' || session.fire_on === 'both');
 
   const encoder = new TextEncoder();
   let total = 0;
@@ -32,9 +39,23 @@ export async function POST(req: NextRequest) {
           // closes the browser instead of scraping on in the background.
           if (req.signal.aborted) break;
           for (const ad of batch) {
-            const enriched: Ad = { ...ad, is_new: !previousIds.has(ad.id) };
+            const enriched: Ad = { ...ad, is_new: !previousIds.has(ad.id), session_id: session?.id };
             upsertAd(enriched);
             total++;
+            if (fireOnScrape) {
+              // Same { job_id, company, ads } shape as a bulk company_done fire.
+              deliverWebhook(
+                { url: session!.webhook_url, secret: session!.webhook_secret, enabled: true },
+                'search.ad_scraped', 'search',
+                {
+                  job_id: session!.id,
+                  session_id: session!.id,
+                  session_name: session!.name,
+                  company: buildAdvertiserCompany(enriched, session!.id),
+                  ads: [enriched],
+                }
+              );
+            }
             send({ type: 'ad', data: enriched });
           }
           send({ type: 'progress', count: total });
@@ -64,6 +85,7 @@ export async function POST(req: NextRequest) {
           });
         }
 
+        if (session && total > 0) touchSearchSession(session.id);
         completeScrapeJob(jobId, total);
         send({ type: 'done', total, job_id: jobId });
       } catch (err) {

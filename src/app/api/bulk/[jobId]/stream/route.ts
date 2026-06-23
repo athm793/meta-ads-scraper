@@ -7,6 +7,8 @@ import {
 import { scrapeAds, searchAdvertisers } from '@/lib/scraper';
 import { randomDelay } from '@/lib/browser';
 import { throttledSince } from '@/lib/rateLimiter';
+import { deliverWebhook } from '@/lib/webhook';
+import type { WebhookConfig } from '@/types/ads';
 import { resolveSiteHandles, normHandle, type SiteHandles } from '@/lib/socialHandles';
 import type { Ad, BulkCompany, BulkMatchMethod, MediaType, Platform, SearchParams, AdvertiserSuggestion } from '@/types/ads';
 
@@ -70,6 +72,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
         // Shared dedup set — ads seen by any worker are skipped by all others
         const globalSeen = new Set<string>();
         let totalDeduped = 0;
+
+        // Per-job outbound webhook (optional). Fired once per completed company
+        // with that company's summary + its ads — fire-and-forget, never blocks.
+        const jobWebhook: WebhookConfig = {
+          url: job!.webhook_url,
+          secret: job!.webhook_secret,
+          enabled: job!.webhook_enabled,
+        };
 
         async function processCompany(company: BulkCompany): Promise<void> {
           if (req.signal.aborted) return;
@@ -218,6 +228,13 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
 
             updateBulkCompany(company.id, updatedCompany);
             incrementBulkJobProgress(jobId);
+
+            // Real-time push: this company's summary + its ads. Fire-and-forget.
+            deliverWebhook(jobWebhook, 'bulk.company_done', 'bulk', {
+              job_id: jobId,
+              company: { ...company, ...updatedCompany },
+              ads: uniqueAds,
+            });
 
             send({
               type: 'company_done',
