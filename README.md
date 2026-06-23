@@ -112,6 +112,9 @@ npm run build
 npm start
 ```
 
+> **Deployment caveat — run this as a single long-lived Node process.**
+> The app is designed to run on one persistent server (local machine, a VM, or a single container). The rate limiter, adaptive backoff, the Meta-API health registry, and the warm typeahead browser all hold **in-memory, per-process** state. On a serverless platform (e.g. Vercel functions) where each request can hit a fresh, isolated instance, that shared state stops being global: every cold instance starts with an empty token bucket and no backoff history, so the global rate limiting and "Meta changed their API" tracking no longer hold across requests. Playwright driving a headless Chromium also doesn't fit typical serverless function limits. If you move off a single process, you'd need to externalise that state (e.g. Redis for the limiter/health) and run the browser on a dedicated worker.
+
 ---
 
 ## Tech stack
