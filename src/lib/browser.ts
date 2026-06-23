@@ -1,5 +1,6 @@
 import path from 'path';
 import fs from 'fs';
+import type { ProxySetting } from './proxies';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let chromiumWithStealth: any = null;
@@ -32,7 +33,7 @@ export async function launchBrowser(headless = true) {
   return browser;
 }
 
-export async function createContext(browser: import('playwright').Browser) {
+export async function createContext(browser: import('playwright').Browser, proxy?: ProxySetting) {
   const viewportWidth = 1280 + Math.floor(Math.random() * 640);
   const viewportHeight = 768 + Math.floor(Math.random() * 312);
 
@@ -46,6 +47,7 @@ export async function createContext(browser: import('playwright').Browser) {
     extraHTTPHeaders: {
       'Accept-Language': 'en-US,en;q=0.9',
     },
+    ...(proxy ? { proxy } : {}),
   });
 
   await context.addInitScript(() => {

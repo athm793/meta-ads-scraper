@@ -1,6 +1,8 @@
 import { NextRequest } from 'next/server';
 import { scrapeAds } from '@/lib/scraper';
 import { upsertAd, createScrapeJob, completeScrapeJob, errorScrapeJob, getPreviousJobAds } from '@/lib/db';
+import { signalStatus } from '@/lib/metaHealth';
+import { throttledSince } from '@/lib/rateLimiter';
 import type { SearchParams, Ad } from '@/types/ads';
 
 export const dynamic = 'force-dynamic';
@@ -20,6 +22,7 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       }
 
+      const startedAt = Date.now();
       try {
         send({ type: 'job_id', job_id: jobId });
 
@@ -32,6 +35,29 @@ export async function POST(req: NextRequest) {
             send({ type: 'ad', data: enriched });
           }
           send({ type: 'progress', count: total });
+        }
+
+        // Meta pushed back during this run — the limiter already backed off,
+        // but tell the user their results may be partial.
+        if (throttledSince(startedAt)) {
+          send({
+            type: 'warning',
+            code: 'META_RATE_LIMITED',
+            message:
+              'Meta rate-limited this run — the scraper automatically slowed down and backed off. Results may be partial; wait a few minutes and re-run if counts look low.',
+          });
+        }
+
+        // If we asked for ad details but couldn't capture Meta's details query,
+        // tell the user why their EU/demographic data is missing — loudly,
+        // rather than letting them assume the ads just had no details.
+        if (params.fetch_details && signalStatus('ad_details') === 'down') {
+          send({
+            type: 'warning',
+            code: 'META_DETAILS_UNAVAILABLE',
+            message:
+              'Meta appears to have changed their "See ad details" API — ads were scraped, but EU transparency and demographic data could not be fetched this run.',
+          });
         }
 
         completeScrapeJob(jobId, total);

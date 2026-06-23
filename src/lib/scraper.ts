@@ -1,6 +1,9 @@
 import type { Page, BrowserContext } from 'playwright';
 import { launchBrowser, createContext, randomDelay } from './browser';
 import { parseGraphQLResponse, parseAdDetails } from './parser';
+import { recordOk, recordDown, MetaSignatureError } from './metaHealth';
+import { acquire, reportBlocked, reportOk, isBlockStatus, looksBlocked } from './rateLimiter';
+import { nextProxy } from './proxies';
 import type { Ad, SearchParams, AdvertiserSuggestion } from '@/types/ads';
 
 // Captured "See ad details" (AdLibraryV3AdDetailsQuery) request, used to replay
@@ -15,7 +18,9 @@ interface DetailSignature {
 // Matches Meta's ad-details GraphQL query (e.g. AdLibraryV3AdDetailsQuery —
 // the version prefix changes over time, so match the stable "AdDetails" part).
 const DETAIL_QUERY_RE = /AdDetails/i;
-const DETAIL_CONCURRENCY = 5;
+// In-page detail fetches per batch. Kept low so a single page doesn't burst
+// Meta; the global rate limiter paces the batches themselves.
+const DETAIL_CONCURRENCY = 3;
 
 const ADS_LIBRARY_BASE = 'https://www.facebook.com/ads/library/';
 
@@ -116,8 +121,9 @@ function extractFromHtml(html: string, jobId?: string, seen?: Set<string>): Ad[]
  * tokens, variable shape) for replay. Returns null if it can't be captured —
  * callers must degrade gracefully (base ads only).
  */
-async function captureDetailSignature(page: Page): Promise<DetailSignature | null> {
+async function captureDetailSignature(page: Page): Promise<{ sig: DetailSignature | null; sawButton: boolean }> {
   let captured: DetailSignature | null = null;
+  let sawButton = false;
 
   const onReq = (req: import('playwright').Request) => {
     try {
@@ -150,6 +156,7 @@ async function captureDetailSignature(page: Page): Promise<DetailSignature | nul
     for (const sel of selectors) {
       const el = page.locator(sel).first();
       if (await el.count() > 0 && await el.isVisible({ timeout: 1500 }).catch(() => false)) {
+        sawButton = true;
         await el.click({ timeout: 3000 }).catch(() => {});
         break;
       }
@@ -160,7 +167,7 @@ async function captureDetailSignature(page: Page): Promise<DetailSignature | nul
   } finally {
     page.off('request', onReq);
   }
-  return captured;
+  return { sig: captured, sawButton };
 }
 
 /** Builds the urlencoded body for one ad by swapping the archive/page ids. */
@@ -198,10 +205,13 @@ async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promi
     .filter((j) => j.body);
   if (jobs.length === 0) return;
 
+  // One token per batch — paces detail enrichment against everything else.
+  await acquire();
+
   // Run all replays inside the page event loop with a concurrency cap
   const results = await page.evaluate(
     async ({ jobs, url, lsd, concurrency }) => {
-      const out: Array<{ id: string; text: string }> = [];
+      const out: Array<{ id: string; status: number; text: string }> = [];
       const queue = [...jobs];
       async function worker() {
         while (queue.length) {
@@ -214,9 +224,9 @@ async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promi
               body: job.body,
               credentials: 'include',
             });
-            out.push({ id: job.id, text: await r.text() });
+            out.push({ id: job.id, status: r.status, text: await r.text() });
           } catch {
-            out.push({ id: job.id, text: '' });
+            out.push({ id: job.id, status: 0, text: '' });
           }
         }
       }
@@ -226,8 +236,12 @@ async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promi
     { jobs, url: sig.url, lsd: sig.lsd, concurrency: DETAIL_CONCURRENCY }
   );
 
+  let blocked = false;
+  let anyOk = false;
   const byId = new Map(batch.map((a) => [a.id, a]));
   for (const res of results) {
+    if (isBlockStatus(res.status) || looksBlocked(res.text)) blocked = true;
+    else if (res.status === 200) anyOk = true;
     const ad = byId.get(res.id);
     if (!ad) continue;
     const json = parseMaybePrefixed(res.text);
@@ -238,6 +252,9 @@ async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promi
       ad.deep_search_done = true;
     }
   }
+  // Adapt: back off if Meta pushed back, relax if it's serving cleanly.
+  if (blocked) reportBlocked();
+  else if (anyOk) reportOk();
 }
 
 export async function* scrapeAds(
@@ -253,7 +270,7 @@ export async function* scrapeAds(
   const pendingJsons: unknown[] = [];
 
   const browser = await launchBrowser(true);
-  const context = await createContext(browser);
+  const context = await createContext(browser, nextProxy());
   const page = await context.newPage();
 
   let rawHtml = '';
@@ -265,6 +282,12 @@ export async function* scrapeAds(
     try {
       const url = response.url();
       const status = response.status();
+
+      // Block detection — Meta pushing back on Ad Library / GraphQL traffic.
+      if ((url.includes('ads/library') || url.includes('/api/graphql')) && isBlockStatus(status)) {
+        reportBlocked();
+        return;
+      }
       if (status !== 200) return;
 
       const method = response.request().method();
@@ -274,6 +297,7 @@ export async function* scrapeAds(
         const text = await response.text().catch(() => '');
         if (text.includes('ad_archive_id')) {
           rawHtml = text;
+          reportOk();
         }
         return;
       }
@@ -281,7 +305,9 @@ export async function* scrapeAds(
       // Capture scroll-triggered GraphQL POST responses (pagination)
       if (method === 'POST' && url.includes('/api/graphql')) {
         const text = await response.text().catch(() => '');
+        if (looksBlocked(text)) { reportBlocked(); return; }
         if (!text.includes('ad_archive_id')) return;
+        reportOk();
         for (const line of text.split('\n')) {
           const t = line.trim();
           if (t[0] !== '{') continue;
@@ -295,6 +321,7 @@ export async function* scrapeAds(
     const targetUrl = buildUrl(params);
     console.log('[scraper] navigating to:', targetUrl);
 
+    await acquire();
     await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await randomDelay(3000, 4500);
     await handleCookieConsent(page);
@@ -304,8 +331,21 @@ export async function* scrapeAds(
     // replay it per ad. Degrades gracefully if the signature can't be captured.
     let detailSig: DetailSignature | null = null;
     if (params.fetch_details) {
-      detailSig = await captureDetailSignature(page);
-      console.log('[scraper] detail signature captured:', !!detailSig);
+      const cap = await captureDetailSignature(page);
+      detailSig = cap.sig;
+      console.log('[scraper] detail signature captured:', !!detailSig, '(saw button:', cap.sawButton, ')');
+      if (cap.sig) {
+        recordOk('ad_details');
+      } else if (cap.sawButton) {
+        // The "See ad details" control was on the page but its GraphQL request
+        // never matched our query name — strong signal Meta renamed the query.
+        recordDown(
+          'ad_details',
+          'Found a "See ad details" control but could not capture its GraphQL request (expected AdLibraryV3AdDetailsQuery). Meta likely renamed the query — EU transparency / demographic data will be unavailable until the matcher is updated.'
+        );
+      }
+      // No button at all is normal (non-EU/non-political ads have no details) —
+      // leave the signal untouched rather than raise a false alarm.
     }
     async function out(batch: Ad[]): Promise<Ad[]> {
       if (detailSig && batch.length) {
@@ -328,6 +368,7 @@ export async function* scrapeAds(
     const maxScrolls = Math.ceil(limit / 25) + 6;
 
     for (let i = 0; i < maxScrolls && collectedAds.length < limit; i++) {
+      await acquire();
       await page.evaluate(() => {
         if (document.body) {
           window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
@@ -355,6 +396,10 @@ export async function* scrapeAds(
     }
 
     console.log('[scraper] done, total:', collectedAds.length);
+    // Any ads parsed means the ad_archive_id payload shape still works. We don't
+    // mark search "down" on zero results — an empty page is also a valid "no
+    // matches", which we can't reliably tell apart from a structure change here.
+    if (collectedAds.length > 0) recordOk('search');
   } finally {
     await page.close().catch(() => {});
     await context.close().catch(() => {});
@@ -468,7 +513,7 @@ function bumpTypeaheadIdle() {
 
 async function buildTypeaheadCtx(): Promise<TypeaheadCtx> {
   const browser = await launchBrowser(true);
-  const context = await createContext(browser);
+  const context = await createContext(browser, nextProxy());
   const page = await context.newPage();
 
   let form: Record<string, string> | null = null;
@@ -482,6 +527,7 @@ async function buildTypeaheadCtx(): Promise<TypeaheadCtx> {
   });
 
   try {
+    await acquire();
     await page.goto(
       'https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=US&media_type=all&q=ad&search_type=keyword_unordered',
       { waitUntil: 'domcontentloaded', timeout: 30000 }
@@ -497,7 +543,12 @@ async function buildTypeaheadCtx(): Promise<TypeaheadCtx> {
     await page.keyboard.type('nike', { delay: 140 }).catch(() => {});
 
     for (let i = 0; i < 25 && !form; i++) await randomDelay(150, 250);
-    if (!form) throw new Error('typeahead signature not captured');
+    if (!form) {
+      throw new MetaSignatureError(
+        'typeahead',
+        'Could not capture Meta\'s advertiser typeahead query (expected useAdLibraryTypeaheadSuggestionDataSourceQuery). Meta likely renamed it — advertiser autocomplete is unavailable until the matcher is updated.'
+      );
+    }
 
     const ctx: TypeaheadCtx = { browser, context, page, form, expires: Date.now() + 10 * 60 * 1000 };
     typeaheadCtx = ctx;
@@ -535,7 +586,8 @@ export async function searchAdvertisers(query: string, country = 'US'): Promise<
     form.variables = JSON.stringify(vars);
     const body = new URLSearchParams(form).toString();
 
-    const text = await ctx.page.evaluate(
+    await acquire();
+    const { status, text } = await ctx.page.evaluate(
       async ({ body, lsd }) => {
         const r = await fetch('/api/graphql/', {
           method: 'POST',
@@ -543,10 +595,13 @@ export async function searchAdvertisers(query: string, country = 'US'): Promise<
           body,
           credentials: 'include',
         });
-        return r.text();
+        return { status: r.status, text: await r.text() };
       },
       { body, lsd: form.lsd || '' }
     );
+
+    if (isBlockStatus(status) || looksBlocked(text)) { reportBlocked(); return []; }
+    reportOk();
 
     const json = parseMaybePrefixed(text) as Record<string, unknown> | null;
     type PR = {
@@ -571,12 +626,27 @@ export async function searchAdvertisers(query: string, country = 'US'): Promise<
 
   try {
     const r = await run(await getTypeaheadCtx());
+    recordOk('typeahead');
     bumpTypeaheadIdle();
     return r;
   } catch {
     // One retry with a fresh context (handles a stale/closed page)
     await teardownTypeahead();
-    try { const r = await run(await getTypeaheadCtx()); bumpTypeaheadIdle(); return r; } catch { return []; }
+    try {
+      const r = await run(await getTypeaheadCtx());
+      recordOk('typeahead');
+      bumpTypeaheadIdle();
+      return r;
+    } catch (err2) {
+      // A signature error is a real "Meta changed their API" event — record it
+      // and surface it to the caller so the UI can flag it loudly. Other errors
+      // (transient network/browser issues) degrade quietly to no suggestions.
+      if (err2 instanceof MetaSignatureError) {
+        recordDown('typeahead', err2.message);
+        throw err2;
+      }
+      return [];
+    }
   }
 }
 

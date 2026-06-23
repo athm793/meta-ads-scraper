@@ -177,7 +177,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [fetchDetails, setFetchDetails] = useState(false);
   const [matchPages, setMatchPages] = useState(true);
   const [matchCountry, setMatchCountry] = useState('US');
-  const [workers, setWorkers] = useState(10);
+  const [workers, setWorkers] = useState(4);
 
   // Restore the last-used worker count so it persists between runs/startups
   useEffect(() => {
@@ -594,7 +594,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
               className="w-full h-1.5 accent-primary cursor-pointer"
             />
             <p className="text-[11px] text-muted-foreground/70">
-              Companies scraped at once. Higher = faster but heavier; lower = gentler. Saved for next time.
+              Companies scraped at once. Higher = faster but raises the chance Meta rate-limits you; 4–6 is a safe sweet spot. Saved for next time.
             </p>
           </div>
 

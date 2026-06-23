@@ -5,6 +5,8 @@ import {
   getBulkJobStatus, resetStuckBulkCompanies,
 } from '@/lib/db';
 import { scrapeAds, searchAdvertisers } from '@/lib/scraper';
+import { randomDelay } from '@/lib/browser';
+import { throttledSince } from '@/lib/rateLimiter';
 import type { Ad, BulkCompany, MediaType, Platform, SearchParams, AdvertiserSuggestion } from '@/types/ads';
 
 export const dynamic = 'force-dynamic';
@@ -32,7 +34,9 @@ function pickBestMatch(matches: AdvertiserSuggestion[], name: string, category?:
   return scored[0].m;
 }
 
-const DEFAULT_WORKERS = 10;
+// Conservative default — 20 parallel headless browsers from one IP is the
+// fastest way to get rate-limited. The global limiter paces requests on top.
+const DEFAULT_WORKERS = 4;
 const clampWorkers = (n: unknown) => Math.min(20, Math.max(1, Math.round(Number(n)) || DEFAULT_WORKERS));
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ jobId: string }> }) {
@@ -54,6 +58,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
         try { controller.enqueue(encoder.encode(': ping\n\n')); } catch { clearInterval(heartbeat); }
       }, 15000);
 
+      const startedAt = Date.now();
       try {
         // A fresh stream means nothing is actually mid-scrape — re-queue any
         // company left as 'scraping' by a previous (paused/disconnected) run.
@@ -202,6 +207,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
               const company = queue.shift();
               if (!company) break;
               await processCompany(company);
+              // Jittered gap between companies so each worker isn't a steady
+              // drumbeat against Meta (on top of the global rate limiter).
+              if (queue.length > 0) await randomDelay(800, 2500);
             }
           })
         );
@@ -215,6 +223,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ jobI
           // Client disconnected without an explicit control action — leave the
           // job runnable so reopening the stream resumes it.
         } else {
+          if (throttledSince(startedAt)) {
+            send({
+              type: 'warning',
+              code: 'META_RATE_LIMITED',
+              message:
+                'Meta rate-limited this job — workers automatically slowed down and backed off. Some companies may show low counts; re-run them in a few minutes, or lower the worker count.',
+            });
+          }
           completeBulkJob(jobId);
           send({ type: 'done', total: pending.length, dedup_count: totalDeduped });
         }

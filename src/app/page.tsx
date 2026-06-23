@@ -23,7 +23,7 @@ import { adsToCsv, exportFilename } from '@/lib/exportCsv';
 import type { Ad, SearchParams, Collection, Tag, BulkCompany, BulkJob, AdvertiserSuggestion } from '@/types/ads';
 import {
   Search, BookMarked, Users, Zap, FolderPlus, Download,
-  Square, PanelLeftOpen,
+  Square, PanelLeftOpen, AlertTriangle, X,
 } from 'lucide-react';
 
 const DEFAULT_PARAMS: SearchParams = {
@@ -55,6 +55,7 @@ export default function HomePage() {
   const [liveAds, setLiveAds] = useState<Ad[]>([]);
   const [, setActiveJobId] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
+  const [scrapeWarning, setScrapeWarning] = useState<string | null>(null);
   const scrapeAbort = useRef<AbortController | null>(null);
 
   // UI state
@@ -141,6 +142,7 @@ export default function HomePage() {
     setHasSearched(true);
     setActiveJobId(null);
     setSearchPage(1);
+    setScrapeWarning(null);
 
     const abort = new AbortController();
     scrapeAbort.current = abort;
@@ -172,6 +174,7 @@ export default function HomePage() {
               setLiveAds((prev) => [...prev, event.data]);
               setScrapeCount((c) => c + 1);
             }
+            if (event.type === 'warning') setScrapeWarning(event.message);
             if (event.type === 'done') setScraping(false);
             if (event.type === 'error') {
               console.error('Scrape error:', event.message);
@@ -278,6 +281,7 @@ export default function HomePage() {
           try {
             const event = JSON.parse(line.slice(6));
             if (event.dedup_count !== undefined) setDedupCount(event.dedup_count);
+            if (event.type === 'warning') setScrapeWarning(event.message);
             if (event.type === 'done' || event.type === 'paused' || event.type === 'cancelled') {
               refreshBulk(jobId);
             }
@@ -294,6 +298,7 @@ export default function HomePage() {
     bulkAbort.current?.abort();
     streamingRef.current = null;
     setDedupCount(0);
+    setScrapeWarning(null);
     setBulkJobId(jobId);
     // The polling query loads the job; an effect opens the stream if it's active.
   }
@@ -521,6 +526,31 @@ export default function HomePage() {
         </header>
 
         <div className="flex-1 overflow-auto">
+          {/* App-level notice: Meta API changed or rate-limited (search + bulk) */}
+          <AnimatePresence>
+            {scrapeWarning && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.15 }}
+                className="overflow-hidden"
+              >
+                <div className="mx-6 mt-4 flex items-start gap-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10 px-3.5 py-3 text-sm">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-400" />
+                  <p className="flex-1 text-amber-200/90">{scrapeWarning}</p>
+                  <button
+                    onClick={() => setScrapeWarning(null)}
+                    className="text-amber-400/70 hover:text-amber-300 transition-colors shrink-0"
+                    title="Dismiss"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <AnimatePresence mode="wait">
             {/* Search Tab */}
             {tab === 'search' && (

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Input } from '@/components/ui/input';
 import type { AdvertiserSuggestion } from '@/types/ads';
-import { Users, Loader2, BadgeCheck } from 'lucide-react';
+import { Users, Loader2, BadgeCheck, AlertTriangle } from 'lucide-react';
 
 interface Props {
   value: string;
@@ -40,14 +40,25 @@ export function AdvertiserSearch({ value, onChange, country, onSelect, onEnter }
   }, []);
 
   const q = debounced.trim();
-  const { data: suggestions = [], isFetching } = useQuery<AdvertiserSuggestion[]>({
+  const { data: suggestions = [], isFetching, error } = useQuery<AdvertiserSuggestion[]>({
     queryKey: ['advertisers', q, country],
-    queryFn: () => fetch(`/api/advertisers?q=${encodeURIComponent(q)}&country=${country || 'US'}`).then((r) => r.json()),
+    queryFn: async () => {
+      const r = await fetch(`/api/advertisers?q=${encodeURIComponent(q)}&country=${country || 'US'}`);
+      const data = await r.json();
+      if (!r.ok) {
+        // Surface Meta-API-changed (503) as a thrown error so we can warn loudly.
+        const err = new Error(data?.error || `Request failed (${r.status})`) as Error & { code?: string };
+        err.code = data?.code;
+        throw err;
+      }
+      return data as AdvertiserSuggestion[];
+    },
     enabled: open && q.length >= 2,
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
   const list = Array.isArray(suggestions) ? suggestions : [];
+  const apiChanged = (error as (Error & { code?: string }) | null)?.code === 'META_API_CHANGED';
 
   return (
     <div ref={ref} className="flex-1 relative">
@@ -67,7 +78,16 @@ export function AdvertiserSearch({ value, onChange, country, onSelect, onEnter }
             Advertisers {isFetching && <Loader2 className="w-3 h-3 animate-spin" />}
           </div>
           <div className="max-h-80 overflow-y-auto">
-            {list.map((s) => (
+            {apiChanged && (
+              <div className="flex items-start gap-2 px-3 py-3 text-xs text-amber-400 bg-amber-500/10 border-b border-amber-500/20">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-medium">Meta changed their search API</p>
+                  <p className="text-amber-400/80 mt-0.5">Advertiser autocomplete is temporarily unavailable. You can still run a keyword search — press Enter.</p>
+                </div>
+              </div>
+            )}
+            {!apiChanged && list.map((s) => (
               <button
                 key={s.page_id}
                 onClick={() => { setOpen(false); onSelect(s); }}
@@ -90,10 +110,10 @@ export function AdvertiserSearch({ value, onChange, country, onSelect, onEnter }
                 </div>
               </button>
             ))}
-            {!isFetching && list.length === 0 && (
+            {!apiChanged && !isFetching && list.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-4">No advertisers found</p>
             )}
-            {isFetching && list.length === 0 && (
+            {!apiChanged && isFetching && list.length === 0 && (
               <p className="text-sm text-muted-foreground text-center py-4 flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" /> Searching advertisers…
               </p>
