@@ -44,13 +44,14 @@ The Meta Ad Library is public but painful to research at scale: no bulk export, 
 - Export your saved/filtered set to CSV or JSON.
 
 ### 🪝 Hook Lab
-A swipe-file and trend-intelligence workbench built from the opening line of every ad:
+A swipe-file and creative-intelligence workbench built from the opening line of every ad:
 - **Auto angle-classification** — each hook is tagged as Question / Stat / How-to / Offer / Urgency / Curiosity / Social proof / Emoji-led / Statement.
 - **Trend stages (creative-viability signal)** — every ad is labelled by how long it's been running: **Battle-tested** (30d+), **Gaining traction** (14–30d), or **New test** (<14d). Long-running ads are the ones advertisers keep because they keep performing. Filter by stage, **sort by longest-running** to surface proven winners, and see the **longest-running ad** for the query at a glance.
 - **Filter by angle**, search, and collapse duplicates ("unique angles" ranked by how many advertisers run them; the longest-running instance of each hook is kept as the example).
 - **Stats** — trend-stage distribution + average ad age + active count, angle distribution (with advertiser counts and average days-running per angle), top CTAs, media mix, most active advertisers.
-- **Trends** — which angles are rising or falling week over week across your whole database.
+- **Durability** — which hook angles have staying power: for each angle, the split of its ads across Battle-tested / Gaining / New, ranked by battle-tested share. Angles advertisers keep running are the proven ones; angles that are mostly new tests are unproven. Plus per-advertiser stage mix in Stats (who has proven creative vs who's just testing). It's a cross-section of the set you're viewing, not a scrape-cadence-dependent time trend.
 - **Headline + CTA extraction** alongside hooks (full swipe file, not just first lines).
+- **Analyze any set, not just a search** — open Hook Lab on your live search results, on a **saved list** (from the Saved tab or the list's "Analyze" button), or on a **search session's** captured ads (the session's "Analyze" button). The panel is labelled with what it's analyzing, so you can compare hooks, angles, CTAs, and trend stages within a specific list or session.
 - Click any hook to **jump to its ad**. Copy individually or export the whole swipe file to CSV.
 
 ### 🏢 Bulk Company Intelligence
@@ -143,17 +144,20 @@ src/
   app/
     page.tsx              # Main UI (search / saved / bulk tabs)
     api/                  # Route handlers
-      scrape/             # SSE keyword/advertiser search
-      bulk/               # Bulk jobs: start, stream, control, export, results
-      ads/                # Query, save, per-ad tags
+      scrape/             # SSE keyword/advertiser search (stamps + webhooks the active session)
+      bulk/               # Bulk jobs: start, stream (+ per-company webhook), control, export, results
+      ads/                # Query (by saved/list/tag/session), save (+ session webhook), per-ad tags
       tags/  collections/ # Tag & list CRUD
-      hooks/trends/       # Hook angle trends
+      sessions/           # Search-session CRUD (name, webhook, fire_on)
+      webhook/test/       # Synchronous webhook test-fire
       export/  download/  # CSV/JSON export, media proxy
-  components/ads/         # AdGrid, AdModal, FiltersPanel, HookExtractor, BulkUpload, TagEditor, …
+  components/ads/         # AdGrid, AdModal, FiltersPanel, HookExtractor, SessionsPanel,
+                          # WebhookTester, BulkUpload, CollectionsPanel, TagEditor, …
   lib/
     scraper.ts            # Playwright scraping + detail enrichment
     parser.ts             # Meta payload → Ad model
-    hooks.ts              # Hook angle classification
+    hooks.ts              # Hook angle classification + duration trend stages
+    webhook.ts            # Outbound webhook delivery (signing, retry) + test-fire
     db.ts                 # SQLite schema + queries
     exportCsv.ts          # Shared CSV builder
 ```

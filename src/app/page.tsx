@@ -68,6 +68,9 @@ export default function HomePage() {
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [hooksOpen, setHooksOpen] = useState(false);
+  // When Hook Lab is opened on a specific curated set (a list or a session) rather
+  // than the current tab's ads, this holds that labelled set.
+  const [hookSource, setHookSource] = useState<{ label: string; ads: Ad[] } | null>(null);
   const [activeCollection, setActiveCollection] = useState<string | null>(null);
   const [activeTag, setActiveTag] = useState<string | null>(null);
   const [savedSearch, setSavedSearch] = useState('');
@@ -214,6 +217,27 @@ export default function HomePage() {
     setLiveAds((prev) => prev.map((a) => (a.id === id ? { ...a, saved } : a)));
     if (activeSessionId) queryClient.invalidateQueries({ queryKey: ['sessions'] });
     if (tab === 'saved') refetchSaved();
+  }
+
+  // Open Hook Lab — either on a specific curated set (list/session) or, with no
+  // argument, on whatever the current tab is showing (live results / saved ads).
+  function openHooks(source?: { label: string; ads: Ad[] }) {
+    setHookSource(source ?? null);
+    setHooksOpen(true);
+  }
+  function closeHooks() {
+    setHooksOpen(false);
+    setHookSource(null);
+  }
+  // Fetch an ad set by query (list or session) and open Hook Lab on it.
+  async function analyzeAdSet(params: Record<string, string>, label: string) {
+    const sp = new URLSearchParams({ limit: '500', sort: 'days_running', ...params });
+    try {
+      const data = await fetch(`/api/ads?${sp}`).then((r) => r.json());
+      openHooks({ label, ads: (data.ads as Ad[]) || [] });
+    } catch {
+      openHooks({ label, ads: [] });
+    }
   }
 
   async function createCollection(name: string, color: string) {
@@ -451,6 +475,11 @@ export default function HomePage() {
 
   const newCount = filteredAds.filter((a) => a.is_new).length;
   const displayAds = tab === 'saved' ? (savedData?.ads || []) : filteredAds;
+  const savedScopeLabel = activeCollection
+    ? `List: ${collections.find((c) => c.id === activeCollection)?.name ?? 'List'}`
+    : activeTag
+    ? `Tag: ${tags.find((t) => t.id === activeTag)?.name ?? 'Tag'}`
+    : 'Saved ads';
 
   const SEARCH_PER_PAGE = 24;
   const searchTotalPages = Math.max(1, Math.ceil(filteredAds.length / SEARCH_PER_PAGE));
@@ -524,7 +553,7 @@ export default function HomePage() {
           <div className="flex items-center gap-2 ml-auto">
             {tab === 'search' && (
               <>
-                <Button size="sm" variant="outline" onClick={() => setHooksOpen(true)} className="h-8 text-xs">
+                <Button size="sm" variant="outline" onClick={() => openHooks()} className="h-8 text-xs">
                   <Zap className="w-3 h-3 mr-1" />Hooks
                 </Button>
                 <Button size="sm" variant="outline" onClick={() => setCollectionsOpen(true)} className="h-8 text-xs">
@@ -726,9 +755,14 @@ export default function HomePage() {
                       />
                     </div>
                     {(savedData?.ads?.length ?? 0) > 0 && (
-                      <Button size="sm" variant="outline" onClick={() => downloadSaved('csv')} className="h-8 text-xs">
-                        <Download className="w-3 h-3 mr-1" />Export
-                      </Button>
+                      <>
+                        <Button size="sm" variant="outline" onClick={() => openHooks({ label: savedScopeLabel, ads: savedData!.ads })} className="h-8 text-xs">
+                          <Zap className="w-3 h-3 mr-1" />Hooks
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => downloadSaved('csv')} className="h-8 text-xs">
+                          <Download className="w-3 h-3 mr-1" />Export
+                        </Button>
+                      </>
                     )}
                     <Button size="sm" variant="outline" onClick={() => setCollectionsOpen(true)} className="h-8 text-xs">
                       <FolderPlus className="w-3 h-3 mr-1" />Manage
@@ -852,6 +886,7 @@ export default function HomePage() {
         onDelete={deleteCollection}
         onCreateTag={createTag}
         onDeleteTag={deleteTag}
+        onAnalyze={(id, name) => { setCollectionsOpen(false); analyzeAdSet({ saved: 'true', collection_id: id }, `List: ${name}`); }}
       />
 
       <SessionsPanel
@@ -861,15 +896,18 @@ export default function HomePage() {
         activeSessionId={activeSessionId}
         onSelectActive={setActiveSessionId}
         onChanged={() => queryClient.invalidateQueries({ queryKey: ['sessions'] })}
+        onAnalyze={(id, name) => { setSessionsOpen(false); analyzeAdSet({ session_id: id }, `Session: ${name}`); }}
       />
 
       <HookExtractor
         open={hooksOpen}
-        onClose={() => setHooksOpen(false)}
-        ads={displayAds}
+        onClose={closeHooks}
+        ads={hookSource ? hookSource.ads : displayAds}
+        contextLabel={hookSource?.label}
         onSelectAd={(id) => {
-          const ad = displayAds.find((a: Ad) => a.id === id);
-          if (ad) { setSelectedAd(ad); setModalOpen(true); setHooksOpen(false); }
+          const set = hookSource ? hookSource.ads : displayAds;
+          const ad = set.find((a: Ad) => a.id === id);
+          if (ad) { setSelectedAd(ad); setModalOpen(true); closeHooks(); }
         }}
       />
 

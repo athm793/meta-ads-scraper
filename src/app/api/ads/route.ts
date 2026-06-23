@@ -11,6 +11,7 @@ export async function GET(req: NextRequest) {
     status: searchParams.get('status') || undefined,
     saved: searchParams.get('saved') === 'true' ? true : searchParams.get('saved') === 'false' ? false : undefined,
     collection_id: searchParams.get('collection_id') || undefined,
+    session_id: searchParams.get('session_id') || undefined,
     tag_id: searchParams.get('tag_id') || undefined,
     job_id: searchParams.get('job_id') || undefined,
     page: Number(searchParams.get('page') || 1),

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { Collection, Tag } from '@/types/ads';
-import { Plus, Trash2, FolderOpen, Tag as TagIcon } from 'lucide-react';
+import { Plus, Trash2, FolderOpen, Tag as TagIcon, BarChart3 } from 'lucide-react';
 
 const COLORS = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ef4444', '#14b8a6'];
 
@@ -19,6 +19,7 @@ interface CollectionsPanelProps {
   onDelete: (id: string) => void;
   onCreateTag: (name: string, color: string) => void;
   onDeleteTag: (id: string) => void;
+  onAnalyze?: (id: string, name: string) => void; // open Hook Lab on this list's ads
 }
 
 function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
@@ -36,7 +37,7 @@ function ColorPicker({ value, onChange }: { value: string; onChange: (c: string)
   );
 }
 
-export function CollectionsPanel({ open, onClose, collections, tags, onCreate, onDelete, onCreateTag, onDeleteTag }: CollectionsPanelProps) {
+export function CollectionsPanel({ open, onClose, collections, tags, onCreate, onDelete, onCreateTag, onDeleteTag, onAnalyze }: CollectionsPanelProps) {
   const [name, setName] = useState('');
   const [color, setColor] = useState(COLORS[0]);
   const [tagName, setTagName] = useState('');
@@ -80,9 +81,16 @@ export function CollectionsPanel({ open, onClose, collections, tags, onCreate, o
                       <span className="text-sm font-medium truncate">{c.name}</span>
                       {c.ad_count != null && <span className="text-xs text-muted-foreground">({c.ad_count})</span>}
                     </div>
-                    <button className="text-muted-foreground hover:text-red-400 p-1 transition-colors" onClick={() => onDelete(c.id)} title="Delete list">
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="flex items-center gap-0.5 shrink-0">
+                      {onAnalyze && (c.ad_count ?? 0) > 0 && (
+                        <button className="text-muted-foreground hover:text-primary p-1 transition-colors" onClick={() => onAnalyze(c.id, c.name)} title="Analyze hooks in this list">
+                          <BarChart3 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <button className="text-muted-foreground hover:text-red-400 p-1 transition-colors" onClick={() => onDelete(c.id)} title="Delete list">
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                 ))}
                 {collections.length === 0 && <p className="text-sm text-muted-foreground text-center py-3">No lists yet</p>}

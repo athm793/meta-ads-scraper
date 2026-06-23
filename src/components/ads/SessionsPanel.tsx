@@ -9,7 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { WebhookTester } from './WebhookTester';
 import type { SearchSession, SessionFireOn } from '@/types/ads';
-import { Plus, Trash2, Play, Pause, Pencil, Check, X, Webhook } from 'lucide-react';
+import { Plus, Trash2, Play, Pause, Pencil, Check, X, Webhook, BarChart3 } from 'lucide-react';
 
 interface SessionsPanelProps {
   open: boolean;
@@ -18,6 +18,7 @@ interface SessionsPanelProps {
   activeSessionId: string | null;
   onSelectActive: (id: string | null) => void;
   onChanged: () => void; // refetch sessions list after a mutation
+  onAnalyze: (id: string, name: string) => void; // open Hook Lab on this session's ads
 }
 
 const FIRE_OPTS: { value: SessionFireOn; label: string }[] = [
@@ -47,11 +48,12 @@ async function api(method: string, body: object) {
   await fetch('/api/sessions', { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }
 
-function SessionRow({ session, live, onSelectActive, onChanged }: {
+function SessionRow({ session, live, onSelectActive, onChanged, onAnalyze }: {
   session: SearchSession;
   live: boolean;
   onSelectActive: (id: string | null) => void;
   onChanged: () => void;
+  onAnalyze: (id: string, name: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(session.name);
@@ -112,6 +114,11 @@ function SessionRow({ session, live, onSelectActive, onChanged }: {
               : <span>no webhook URL — grouping only</span>}
           </p>
         </div>
+        {session.ad_count != null && session.ad_count > 0 && (
+          <button onClick={() => onAnalyze(session.id, session.name)} className="text-muted-foreground hover:text-primary p-1 transition-colors" title="Analyze hooks in this session">
+            <BarChart3 className="w-3.5 h-3.5" />
+          </button>
+        )}
         <button onClick={() => setEditing((v) => !v)} className="text-muted-foreground hover:text-foreground p-1 transition-colors" title="Edit">
           <Pencil className="w-3.5 h-3.5" />
         </button>
@@ -151,7 +158,7 @@ function SessionRow({ session, live, onSelectActive, onChanged }: {
   );
 }
 
-export function SessionsPanel({ open, onClose, sessions, activeSessionId, onSelectActive, onChanged }: SessionsPanelProps) {
+export function SessionsPanel({ open, onClose, sessions, activeSessionId, onSelectActive, onChanged, onAnalyze }: SessionsPanelProps) {
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
@@ -223,6 +230,7 @@ export function SessionsPanel({ open, onClose, sessions, activeSessionId, onSele
                   live={s.id === activeSessionId}
                   onSelectActive={onSelectActive}
                   onChanged={onChanged}
+                  onAnalyze={onAnalyze}
                 />
               ))}
               {sessions.length === 0 && <p className="text-sm text-muted-foreground text-center py-3">No sessions yet</p>}

@@ -345,14 +345,6 @@ export function queryAds(params: {
   return { ads, total };
 }
 
-// Lightweight pull of first-line + timestamp for hook trend analysis
-export function getHookSamples(): Array<{ body_variants: string; scraped_at: string; started_at: string | null }> {
-  const db = getDb();
-  return db.prepare(
-    `SELECT body_variants, scraped_at, started_at FROM ads WHERE body_variants IS NOT NULL AND body_variants != '[]'`
-  ).all() as Array<{ body_variants: string; scraped_at: string; started_at: string | null }>;
-}
-
 export function getAdById(id: string): Ad | null {
   const db = getDb();
   const row = db.prepare('SELECT * FROM ads WHERE id = ?').get(id) as Record<string, unknown> | undefined;

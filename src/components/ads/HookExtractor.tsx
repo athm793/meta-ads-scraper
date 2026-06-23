@@ -5,10 +5,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { useQuery } from '@tanstack/react-query';
 import type { Ad } from '@/types/ads';
-import { adToHook, ANGLES, ANGLE_LABEL, ANGLE_COLOR, TREND_STAGES, STAGE_LABEL, STAGE_COLOR, type HookRecord, type TrendStage } from '@/lib/hooks';
-import { Copy, Check, Search, Download, Layers, List, BarChart3, TrendingUp, TrendingDown, Minus, ArrowRight, Flame, Clock, SortDesc } from 'lucide-react';
+import { adToHook, ANGLES, ANGLE_LABEL, ANGLE_COLOR, TREND_STAGES, STAGE_COLOR, STAGE_LABEL, type HookRecord, type TrendStage } from '@/lib/hooks';
+import { Copy, Check, Search, Download, Layers, List, BarChart3, Gauge, ArrowRight, Flame, Clock, SortDesc } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 interface HookExtractorProps {
@@ -16,9 +15,10 @@ interface HookExtractorProps {
   onClose: () => void;
   ads: Ad[];
   onSelectAd?: (id: string) => void;
+  contextLabel?: string; // e.g. "List: Winners" / "Session: Competitor sweep"
 }
 
-type View = 'hooks' | 'stats' | 'trends';
+type View = 'hooks' | 'stats' | 'durability';
 
 function AngleBadge({ angle }: { angle: string }) {
   const c = ANGLE_COLOR[angle] || '#94a3b8';
@@ -40,7 +40,7 @@ function StageBadge({ stage, days }: { stage: TrendStage; days: number | null })
   );
 }
 
-export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorProps) {
+export function HookExtractor({ open, onClose, ads, onSelectAd, contextLabel }: HookExtractorProps) {
   const [copied, setCopied] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<View>('hooks');
@@ -120,16 +120,21 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
     }).filter((a) => a.count > 0).sort((a, b) => b.count - a.count);
     const top = (m: Map<string, number>, n: number) => [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, n);
 
-    // Trend stages (duration-based) — the actor's core "creative viability" signal
+    // Trend stages (duration-based) — the "creative viability" signal
     const stageCounts: Record<TrendStage, number> = { battle_tested: 0, gaining: 0, new: 0, unknown: 0 };
     const ages: number[] = [];
     let active = 0;
     let longest: HookRecord | null = null;
+    // Per-advertiser stage mix — who has proven (long-running) creative vs who's testing
+    const advStages = new Map<string, { battle: number; gaining: number; neu: number }>();
     for (const r of records) {
       stageCounts[r.stage]++;
       if (r.ageDays != null) ages.push(r.ageDays);
       if (r.status === 'ACTIVE') active++;
       if (r.ageDays != null && (longest == null || r.ageDays > (longest.ageDays ?? -1))) longest = r;
+      const as = advStages.get(r.advertiser) ?? { battle: 0, gaining: 0, neu: 0 };
+      if (r.stage === 'battle_tested') as.battle++; else if (r.stage === 'gaining') as.gaining++; else if (r.stage === 'new') as.neu++;
+      advStages.set(r.advertiser, as);
     }
     const avgAge = ages.length ? Math.round(ages.reduce((s, n) => s + n, 0) / ages.length) : null;
 
@@ -142,18 +147,29 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
       topCtas: top(ctas, 8),
       media: top(media, 6),
       topAdvertisers: top(advertisers, 8),
+      advStages,
       stageCounts,
       avgAge,
       longest,
     };
   }, [records]);
 
-  // ---- Trends ----
-  const { data: trends } = useQuery<{ periods: { week: string; total: number; angles: Record<string, number> }[]; deltas: Record<string, number> }>({
-    queryKey: ['hook-trends'],
-    queryFn: () => fetch('/api/hooks/trends').then((r) => r.json()),
-    enabled: open && view === 'trends',
-  });
+  // ---- Angle durability: which angles have staying power (cross-section of this set) ----
+  const durability = useMemo(() => {
+    return ANGLES.map((a) => {
+      let battle = 0, gaining = 0, neu = 0, unknown = 0;
+      for (const r of records) {
+        if (!r.angles.includes(a.key)) continue;
+        if (r.stage === 'battle_tested') battle++;
+        else if (r.stage === 'gaining') gaining++;
+        else if (r.stage === 'new') neu++;
+        else unknown++;
+      }
+      const total = battle + gaining + neu + unknown;
+      const known = battle + gaining + neu;
+      return { ...a, total, known, battle, gaining, neu, battleShare: known ? battle / known : 0 };
+    }).filter((a) => a.total > 0).sort((a, b) => b.battleShare - a.battleShare || b.total - a.total);
+  }, [records]);
 
   function copy(id: string, text: string) {
     navigator.clipboard.writeText(text).catch(() => {});
@@ -187,7 +203,12 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-[560px] max-w-[96vw] flex flex-col gap-0 p-0">
         <SheetHeader className="px-5 py-4 border-b border-border/50 shrink-0">
-          <SheetTitle>Hook Lab</SheetTitle>
+          <SheetTitle className="flex items-center gap-2">
+            Hook Lab
+            {contextLabel && (
+              <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">{contextLabel}</span>
+            )}
+          </SheetTitle>
           <p className="text-xs text-muted-foreground">
             {records.length.toLocaleString()} {records.length === 1 ? 'hook' : 'hooks'} across {advertiserCount.toLocaleString()} {advertiserCount === 1 ? 'advertiser' : 'advertisers'}
           </p>
@@ -196,7 +217,7 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
         {/* Sticky controls: view tabs + (hooks) search/filters */}
         <div className="px-5 pt-3 pb-3.5 space-y-3 border-b border-border/50 shrink-0">
           <div className="flex p-0.5 gap-0.5 rounded-lg bg-muted/40 border border-border/40">
-            {([['hooks', 'Swipe file', List], ['stats', 'Stats', BarChart3], ['trends', 'Trends', TrendingUp]] as const).map(([v, label, Icon]) => (
+            {([['hooks', 'Swipe file', List], ['stats', 'Stats', BarChart3], ['durability', 'Durability', Gauge]] as const).map(([v, label, Icon]) => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -409,65 +430,87 @@ export function HookExtractor({ open, onClose, ads, onSelectAd }: HookExtractorP
               </div>
 
               <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Most active advertisers</p>
-                <div className="space-y-1">
-                  {stats.topAdvertisers.map(([adv, n]) => (
-                    <div key={adv} className="flex items-center justify-between text-xs">
-                      <span className="truncate">{adv}</span>
-                      <span className="text-muted-foreground tabular-nums">{n} ads</span>
-                    </div>
-                  ))}
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Most active advertisers</p>
+                  <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                    {TREND_STAGES.map((s) => (
+                      <span key={s.key} className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />{s.short}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  {stats.topAdvertisers.map(([adv, n]) => {
+                    const st = stats.advStages.get(adv) ?? { battle: 0, gaining: 0, neu: 0 };
+                    const known = st.battle + st.gaining + st.neu;
+                    return (
+                      <div key={adv} className="space-y-1">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="truncate">{adv}</span>
+                          <span className="text-muted-foreground tabular-nums">{n} ads{st.battle > 0 ? <span className="text-emerald-400"> · {st.battle} proven</span> : ''}</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden flex">
+                          {known > 0 && (
+                            <>
+                              <div style={{ width: `${(st.battle / known) * 100}%`, background: STAGE_COLOR.battle_tested }} />
+                              <div style={{ width: `${(st.gaining / known) * 100}%`, background: STAGE_COLOR.gaining }} />
+                              <div style={{ width: `${(st.neu / known) * 100}%`, background: STAGE_COLOR.new }} />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
           </ScrollArea>
         )}
 
-        {/* ---------- TRENDS ---------- */}
-        {view === 'trends' && (
+        {/* ---------- DURABILITY ---------- */}
+        {view === 'durability' && (
           <ScrollArea className="flex-1 min-h-0">
-            <div className="px-5 py-4 space-y-6">
-              <p className="text-[11px] text-muted-foreground">
-                Which hook angles are trending up or down — comparing the most recent week of scraped ads to the week before, grouped by each ad&apos;s launch date.
+            <div className="px-5 py-4 space-y-5">
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                Which hook angles have staying power. For each angle, the split of its ads by how long they&apos;ve run —
+                a high <span style={{ color: STAGE_COLOR.battle_tested }}>battle-tested</span> share means advertisers
+                keep that angle running because it works; a high <span style={{ color: STAGE_COLOR.new }}>new test</span>{' '}
+                share means it&apos;s mostly unproven. A snapshot of this set, not a time trend.
               </p>
-              {!trends || trends.periods.length < 2 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">
-                  Need ads spanning at least two weeks to show trends. Keep scraping over time.
-                </p>
-              ) : (
-                <>
-                  <div className="space-y-2">
-                    {ANGLES.filter((a) => (trends.deltas[a.key] ?? 0) !== 0).sort((a, b) => Math.abs(trends.deltas[b.key]) - Math.abs(trends.deltas[a.key])).map((a) => {
-                      const d = trends.deltas[a.key] ?? 0;
-                      const up = d > 0;
-                      return (
-                        <div key={a.key} className="flex items-center justify-between p-2.5 rounded-lg border border-border/60">
-                          <span className="flex items-center gap-2 text-sm"><span className="w-2.5 h-2.5 rounded-full" style={{ background: a.color }} />{a.label}</span>
-                          <span className={`flex items-center gap-1 text-xs font-semibold tabular-nums ${up ? 'text-emerald-400' : 'text-red-400'}`}>
-                            {up ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                            {up ? '+' : ''}{d}%
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {ANGLES.every((a) => (trends.deltas[a.key] ?? 0) === 0) && (
-                      <p className="flex items-center justify-center gap-1 text-sm text-muted-foreground py-4"><Minus className="w-4 h-4" /> No change between the last two weeks</p>
-                    )}
-                  </div>
 
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Weekly volume</p>
-                    <div className="space-y-1">
-                      {trends.periods.slice(-8).map((p) => (
-                        <div key={p.week} className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{p.week}</span>
-                          <span className="tabular-nums">{p.total} ads</span>
-                        </div>
-                      ))}
+              <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                {TREND_STAGES.map((s) => (
+                  <span key={s.key} className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full" style={{ background: s.color }} />{s.label} <span className="opacity-70">({s.short})</span>
+                  </span>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                {durability.map((a) => (
+                  <div key={a.key} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full" style={{ background: a.color }} />{a.label}</span>
+                      <span className="tabular-nums">
+                        <span style={{ color: STAGE_COLOR.battle_tested }}>{Math.round(a.battleShare * 100)}% battle-tested</span>
+                        <span className="text-muted-foreground"> · {a.total} ad{a.total === 1 ? '' : 's'}</span>
+                      </span>
                     </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden flex">
+                      {a.known > 0 && (
+                        <>
+                          <div style={{ width: `${(a.battle / a.known) * 100}%`, background: STAGE_COLOR.battle_tested }} title={`${a.battle} battle-tested`} />
+                          <div style={{ width: `${(a.gaining / a.known) * 100}%`, background: STAGE_COLOR.gaining }} title={`${a.gaining} gaining`} />
+                          <div style={{ width: `${(a.neu / a.known) * 100}%`, background: STAGE_COLOR.new }} title={`${a.neu} new`} />
+                        </>
+                      )}
+                    </div>
+                    {a.known === 0 && <p className="text-[10px] text-muted-foreground">No dated ads for this angle</p>}
                   </div>
-                </>
-              )}
+                ))}
+                {durability.length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-8">No hooks loaded</p>
+                )}
+              </div>
             </div>
           </ScrollArea>
         )}
