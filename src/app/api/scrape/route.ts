@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { scrapeAds } from '@/lib/scraper';
 import { upsertAd, createScrapeJob, completeScrapeJob, errorScrapeJob, getPreviousJobAds } from '@/lib/db';
 import { signalStatus } from '@/lib/metaHealth';
-import { throttledSince } from '@/lib/rateLimiter';
+import { totalBlockCount } from '@/lib/rateLimiter';
 import type { SearchParams, Ad } from '@/types/ads';
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       }
 
-      const startedAt = Date.now();
+      const blocksAtStart = totalBlockCount();
       try {
         send({ type: 'job_id', job_id: jobId });
 
@@ -40,9 +40,10 @@ export async function POST(req: NextRequest) {
           send({ type: 'progress', count: total });
         }
 
-        // Meta pushed back during this run — the limiter already backed off,
-        // but tell the user their results may be partial.
-        if (throttledSince(startedAt)) {
+        // Only warn on SUSTAINED throttling. A single transient 429 is normal
+        // and the backoff absorbs it without losing results — warning on that
+        // was over-alarming (every brand-page scrape would cry wolf).
+        if (totalBlockCount() - blocksAtStart >= 2) {
           send({
             type: 'warning',
             code: 'META_RATE_LIMITED',

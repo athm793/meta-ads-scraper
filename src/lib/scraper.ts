@@ -261,7 +261,7 @@ async function enrichBatch(page: Page, sig: DetailSignature, batch: Ad[]): Promi
     }
   }
   // Adapt: back off if Meta pushed back, relax if it's serving cleanly.
-  if (blocked) reportBlocked();
+  if (blocked) reportBlocked('ad-details');
   else if (anyOk) reportOk();
 }
 
@@ -299,7 +299,7 @@ export async function* scrapeAds(
 
       // Block detection — Meta pushing back on Ad Library / GraphQL traffic.
       if ((url.includes('ads/library') || url.includes('/api/graphql')) && isBlockStatus(status)) {
-        reportBlocked();
+        reportBlocked(response.request().method() === 'GET' ? 'page-nav' : 'pagination');
         return;
       }
       if (status !== 200) return;
@@ -612,7 +612,7 @@ export async function searchAdvertisers(query: string, country = 'US'): Promise<
       { body, lsd: form.lsd || '' }
     );
 
-    if (isBlockStatus(status)) { reportBlocked(); return []; }
+    if (isBlockStatus(status)) { reportBlocked('typeahead'); return []; }
     reportOk();
 
     const json = parseMaybePrefixed(text) as Record<string, unknown> | null;

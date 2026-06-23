@@ -33,27 +33,42 @@ const MAX_BLOCK_EXP = 5; // cap the exponent so 10 simultaneous blocks don't pin
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// After this much calm, a new block is treated as a fresh incident (don't let
+// one run's backoff escalate the next run/click).
+const BLOCK_RESET_MS = 45_000;
+
 // ---- backoff state (shared) ----
 let consecutiveBlocks = 0;
 let cooldownUntil = 0;
 let lastBlockAt = 0;
+let totalBlocks = 0; // monotonic — lets callers measure blocks within a single run
 
 function cooldownRemaining(): number {
   return Math.max(0, cooldownUntil - Date.now());
 }
 
-/** Signal that Meta pushed back (429/403/block page). Grows the cooldown. */
-export function reportBlocked(): void {
+/** Signal that Meta pushed back (429/403). Grows the cooldown. */
+export function reportBlocked(source?: string): void {
+  // Reset the escalation if it's been calm for a while — a brand-page click
+  // shouldn't inherit the backoff from an earlier, unrelated run.
+  if (lastBlockAt && Date.now() - lastBlockAt > BLOCK_RESET_MS) consecutiveBlocks = 0;
   consecutiveBlocks = Math.min(MAX_BLOCK_EXP, consecutiveBlocks + 1);
+  totalBlocks += 1;
   const raw = Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (consecutiveBlocks - 1));
   const jittered = raw * (0.7 + Math.random() * 0.6); // ±30% so workers don't sync up
   cooldownUntil = Math.max(cooldownUntil, Date.now() + jittered);
   lastBlockAt = Date.now();
+  if (process.env.MAS_DEBUG_RATELIMIT) console.warn(`[rate-limit] Meta 429/403${source ? ' @ ' + source : ''} (block #${consecutiveBlocks})`);
 }
 
 /** Signal a clean response. Recovers quickly so one block doesn't linger. */
 export function reportOk(): void {
   consecutiveBlocks = 0;
+}
+
+/** Monotonic count of blocks seen — snapshot before/after a run to measure it. */
+export function totalBlockCount(): number {
+  return totalBlocks;
 }
 
 export interface RateLimitState {
