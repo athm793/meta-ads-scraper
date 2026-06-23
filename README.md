@@ -56,7 +56,7 @@ A swipe-file and analytics workbench built from the opening line of every ad:
 Check the Meta ad activity of a whole list of companies at once:
 - Upload a **CSV** (with automatic column mapping) or paste a list — **deduplicated** on import, with a compact summary instead of re-dumping the whole file.
 - **Brand-page matching, not just keyword** — for each company the scraper resolves the actual Meta advertiser page. Supply a **country** to look up the brand in and an optional **company type / category** column so it picks the *right* page when several brands share a name, instead of grabbing the first match.
-- Scrapes companies **in parallel** with a configurable **1–20 workers** (your setting is remembered between runs).
+- Scrapes companies **in parallel** with a configurable **1–10 workers** (default 4; your setting is remembered between runs).
 - Per-company results: matched page name, active/inactive ad counts, ad types, platforms, spend range, last-ad date.
 - **Shared deduplication** across companies.
 - **Scope filters** per job: status, media types, platforms, and optional "fetch ad details".
@@ -157,7 +157,7 @@ The scraper reads the public Ad Library at a deliberately polite pace and adapts
 
 - **Global token-bucket limiter** — every request to Meta (page loads, pagination, in-page detail/typeahead replays) passes through one process-wide rate limiter, so no number of bulk workers can burst past a safe rate. Tune with `META_RATE_PER_SEC` (default 3) and `META_RATE_BURST` (default 6).
 - **Adaptive backoff** — on an HTTP 429/403 or a "try again later" body, an exponential cooldown (4s up to 5min, with jitter) kicks in across all workers, then unwinds once Meta serves cleanly again. If a run gets throttled, the UI says so instead of silently returning partial data.
-- **Conservative bulk concurrency** — bulk defaults to 4 parallel workers (1–20 range) with a jittered gap between companies. High worker counts from a single IP are the most common way to get throttled.
+- **Conservative bulk concurrency** — bulk defaults to 4 parallel workers (capped at 10) with a jittered gap between companies. High worker counts from a single IP are the most common way to get throttled.
 - **Optional proxy rotation** — fully opt-in for heavier use. Provide proxies via `META_SCRAPER_PROXIES` (comma-separated) or a `data/proxies.txt` file (one per line), formatted `[scheme://][user:pass@]host:port`. They're rotated round-robin per browser context. With none configured, the scraper connects directly, exactly as before.
 - **Fails loudly when Meta changes their API** — the scraper depends on reverse-engineered Meta GraphQL queries whose names Meta rotates over time. If a query can't be captured (e.g. the typeahead or "See ad details" query was renamed), the affected feature surfaces a clear "Meta changed their API" warning instead of silently returning an empty result that looks like "no matches".
 - **Health monitoring** — `GET /api/health/meta` reports the status of each Meta integration (typeahead, ad details, search), including the exact query each one depends on; add `?probe=1` for a live re-test. Returns 503 if anything is down — wire it to an uptime monitor.
