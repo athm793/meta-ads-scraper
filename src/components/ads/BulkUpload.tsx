@@ -511,7 +511,21 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                 <div className="space-y-1">
                   <h3 className="text-sm font-semibold">Add your companies</h3>
                   <p className="text-xs text-muted-foreground">
-                    Paste one company per line, or upload a CSV. Plain names or domains both work — duplicates are removed automatically.
+                    Paste one company per line, or upload a CSV. Duplicates are removed automatically.
+                  </p>
+                </div>
+
+                {/* Name-hygiene guide — cleaner names match the right brand page */}
+                <div className="rounded-md border border-primary/20 bg-primary/[0.04] p-2.5 space-y-1.5">
+                  <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+                    <Info className="w-3 h-3 text-primary" /> Cleaner brand names match better
+                  </div>
+                  <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                    We match each name to its Meta advertiser page, so use the brand&apos;s common name, not its legal entity or a URL.
+                    <span className="text-foreground/90"> &quot;Notion&quot;</span> matches;
+                    <span className="text-muted-foreground"> &quot;Notion Labs, Inc.&quot;</span> or
+                    <span className="text-muted-foreground"> &quot;notion.so&quot;</span> often won&apos;t.
+                    Strip legal suffixes (Inc, LLC, Ltd), taglines, and domains before uploading. For guaranteed matches, add a <span className="font-medium">Page URL / ID</span> column.
                   </p>
                 </div>
 
@@ -592,7 +606,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                   </div>
                 ) : (
                   <Textarea
-                    placeholder={'Nike\nApple\nshopify.com\nHubSpot\nNotion\n\n…one company name or domain per line'}
+                    placeholder={'Nike\nApple\nShopify\nHubSpot\nNotion\n\n…one clean brand name per line'}
                     rows={7}
                     value={textInput}
                     onChange={(e) => handleTextChange(e.target.value)}
