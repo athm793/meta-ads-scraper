@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   Upload, Play, Pause, Square, FileText, X, History, CheckCircle2, Loader2, Clock,
   Columns3, Archive, ArchiveRestore, Trash2, ArrowLeft, ArrowRight, Check,
-  Building2, Target, Rocket, Globe, Tag,
+  Building2, Target, Rocket, Globe, Tag, Info,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import Papa from 'papaparse';
@@ -56,7 +56,7 @@ const ACTIVE_STATUSES = new Set(['running', 'queued', 'paused']);
 
 const NO_COLUMN = '__none__';
 
-type CompanyRow = { company_name: string; website?: string; category?: string; page_id?: string };
+type CompanyRow = { company_name: string; category?: string; page_id?: string };
 
 // Case-insensitive dedup by company name; returns kept rows + how many dropped.
 function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: number } {
@@ -71,7 +71,6 @@ function dedupeCompanies(list: CompanyRow[]): { companies: CompanyRow[]; dupes: 
     seen.add(key);
     companies.push({
       company_name: name,
-      website: c.website?.trim() || undefined,
       category: c.category?.trim() || undefined,
       page_id: c.page_id || undefined,
     });
@@ -243,7 +242,7 @@ function CompanyPreview({ companies, dupes, onClear }: { companies: CompanyRow[]
           <span
             key={`${c.company_name}-${i}`}
             className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-background border border-border/60 text-xs max-w-full"
-            title={[c.company_name, c.website, c.category].filter(Boolean).join(' · ')}
+            title={[c.company_name, c.category].filter(Boolean).join(' · ')}
           >
             <span className="truncate max-w-[180px]">{c.company_name}</span>
             {c.category && <span className="text-[10px] text-muted-foreground shrink-0">· {c.category}</span>}
@@ -278,7 +277,6 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
   const [rawRows, setRawRows] = useState<Record<string, string>[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [companyCol, setCompanyCol] = useState('');
-  const [websiteCol, setWebsiteCol] = useState(NO_COLUMN);
   const [categoryCol, setCategoryCol] = useState(NO_COLUMN);
   const [pageCol, setPageCol] = useState(NO_COLUMN);
   const [loading, setLoading] = useState(false);
@@ -374,7 +372,6 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     if (fileName) {
       const mapped = rawRows.map((row) => ({
         company_name: companyCol ? (row[companyCol] ?? '') : '',
-        website: websiteCol !== NO_COLUMN ? (row[websiteCol] ?? '') : undefined,
         category: categoryCol !== NO_COLUMN ? (row[categoryCol] ?? '') : undefined,
         page_id: pageCol !== NO_COLUMN ? (extractPageId(row[pageCol] ?? '') ?? undefined) : undefined,
       }));
@@ -382,7 +379,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     }
     const lines = textInput.split('\n').map((l) => ({ company_name: l }));
     return dedupeCompanies(lines);
-  }, [fileName, rawRows, companyCol, websiteCol, categoryCol, pageCol, textInput]);
+  }, [fileName, rawRows, companyCol, categoryCol, pageCol, textInput]);
 
   function handleTextChange(val: string) {
     setTextInput(val);
@@ -397,7 +394,6 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
     setRawRows([]);
     setColumns([]);
     setCompanyCol('');
-    setWebsiteCol(NO_COLUMN);
     setCategoryCol(NO_COLUMN);
     setPageCol(NO_COLUMN);
     if (fileRef.current) fileRef.current.value = '';
@@ -416,10 +412,6 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
           guessColumn(fields, /^(company[\s_-]?name|company|name|account|business|organization)$/i) ||
           guessColumn(fields, /(company|name|account|business)/i) ||
           fields[0] || '';
-        const guessedWebsite =
-          guessColumn(fields, /^(website|domain|url|site|web)$/i) ||
-          guessColumn(fields, /(website|domain|url)/i) ||
-          NO_COLUMN;
         const guessedCategory =
           guessColumn(fields, /^(category|industry|type|sector|vertical)$/i) ||
           guessColumn(fields, /(category|industry|sector|vertical)/i) ||
@@ -431,7 +423,6 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
         setRawRows(results.data);
         setColumns(fields);
         setCompanyCol(guessedCompany);
-        setWebsiteCol(guessedWebsite);
         setCategoryCol(guessedCategory);
         setPageCol(guessedPage);
         setFileName(file.name);
@@ -563,27 +554,7 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                             </Select>
                           </div>
                           <div className="space-y-1">
-                            <Label className="text-[11px] text-muted-foreground">Website (optional)</Label>
-                            <Select value={websiteCol} onValueChange={(v) => v && setWebsiteCol(v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
-                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-muted-foreground">Category / type (optional)</Label>
-                            <Select value={categoryCol} onValueChange={(v) => v && setCategoryCol(v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
-                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-[11px] text-muted-foreground">Page URL / ID (optional — exact match)</Label>
+                            <Label className="text-[11px] text-muted-foreground">Page URL / ID (optional)</Label>
                             <Select value={pageCol} onValueChange={(v) => v && setPageCol(v)}>
                               <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                               <SelectContent>
@@ -592,10 +563,30 @@ export function BulkUpload({ onStart }: BulkUploadProps) {
                               </SelectContent>
                             </Select>
                           </div>
+                          <div className="space-y-1 col-span-2">
+                            <Label className="text-[11px] text-muted-foreground">Category / industry (optional)</Label>
+                            <Select value={categoryCol} onValueChange={(v) => v && setCategoryCol(v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value={NO_COLUMN} className="text-xs">None</SelectItem>
+                                {columns.map((col) => <SelectItem key={col} value={col} className="text-xs">{col}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
                         </div>
-                        <p className="text-[11px] text-muted-foreground/70 mt-2 leading-relaxed">
-                          Tip: a <span className="font-medium">Page URL / ID</span> column (paste the brand&apos;s Ad Library link) guarantees the right page — no name guessing. <span className="font-medium">Category</span> helps when several brands share a name.
-                        </p>
+
+                        {/* How matching works — plain-language guide */}
+                        <div className="mt-2.5 rounded-md border border-border/40 bg-background/40 p-2.5 space-y-1.5">
+                          <div className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+                            <Info className="w-3 h-3 text-primary" /> How we find each company
+                          </div>
+                          <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                            <span className="font-medium text-foreground/90">Page URL / ID</span> is the surest option: paste a brand&apos;s Meta Ad Library link and we scrape that exact page, no guessing.
+                          </p>
+                          <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                            <span className="font-medium text-foreground/90">Category / industry</span> is a tiebreaker. When several different brands share the same name (say a SaaS and a restaurant both called &quot;Summit&quot;), we prefer the one whose Meta page category matches what you provide here. Without it, we match on name alone and skip a company rather than scrape the wrong brand.
+                          </p>
+                        </div>
                       </div>
                     )}
                   </div>
