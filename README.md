@@ -2,7 +2,7 @@
 
 A local, self-hosted tool for searching and analyzing the **public [Meta Ad Library](https://www.facebook.com/ads/library/)** — Facebook & Instagram ads — as a competitive-research and creative swipe-file workbench.
 
-> **Proprietary software — see [License](#license). All rights reserved.**
+> **Open source — [Apache License 2.0](LICENSE).**
 
 > **No API key. No access token. No account.**
 > It drives a real headless browser (Playwright) against the public Ad Library, reads the same data the website does, and stores everything in a local SQLite file on your machine. Nothing leaves your computer.
@@ -185,4 +185,6 @@ The scraper reads the public Ad Library at a deliberately polite pace and adapts
 
 ## License
 
-**Proprietary — © 2026 athm793. All rights reserved.** See [LICENSE](LICENSE). This source is private and confidential; no copying, distribution, or use is permitted without prior written consent.
+Licensed under the **Apache License, Version 2.0** — see [LICENSE](LICENSE) and [NOTICE](NOTICE). © 2026 athm793. You may use, modify, and distribute this software (including commercially) under the terms of the license.
+
+This tool reads only the **publicly available** Meta Ad Library. Use it responsibly and in accordance with Meta's Terms of Service; you are responsible for how you use it.
